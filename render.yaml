@@ -1,0 +1,16 @@
+services:
+  - type: web
+    runtime: docker
+    name: smart-finance-analysis
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: MPLCONFIGDIR
+        value: /app/generated_outputs/.matplotlib
