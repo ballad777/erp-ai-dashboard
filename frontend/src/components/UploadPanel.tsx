@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentReportPanel } from "@/components/AgentReportPanel";
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { FinancialAnalysisPanel } from "@/components/FinancialAnalysisPanel";
@@ -23,6 +23,7 @@ type DatasetUpload = {
 
 export function UploadPanel() {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [uploads, setUploads] = useState<DatasetUpload[]>([]);
   const [mergedResult, setMergedResult] = useState<MergedDatasetAnalysis | null>(null);
   const [batchNotes, setBatchNotes] = useState<string[]>([]);
@@ -33,6 +34,19 @@ export function UploadPanel() {
   const completedCount = completedUploads.length;
   const failedCount = uploads.filter((upload) => upload.error).length;
   const mergedFiles = completedUploads.map((upload) => upload.file);
+  const workspaceState = isLoading
+    ? "讀取中"
+    : uploads.length === 0
+      ? "等待資料"
+      : failedCount > 0
+        ? "需要檢查"
+        : completedCount > 0
+          ? "可進行分析"
+          : "準備讀取";
+  const readinessPercent =
+    uploads.length === 0
+      ? 0
+      : Math.round(((completedCount + (isLoading ? 0.35 : 0)) / uploads.length) * 100);
 
   const totalSizeLabel = useMemo(() => {
     const totalBytes = uploads.reduce((sum, upload) => sum + upload.file.size, 0);
@@ -40,9 +54,7 @@ export function UploadPanel() {
     return `${(totalBytes / 1024 / 1024).toFixed(2)} MB`;
   }, [uploads]);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  const analyzeUploads = useCallback(async () => {
     if (uploads.length === 0) {
       setError("請先選擇至少一個 CSV 或 Excel 檔案。");
       return;
@@ -86,6 +98,11 @@ export function UploadPanel() {
         caughtError instanceof Error ? caughtError.message : "多檔資料集分析失敗。"
       );
     }
+  }, [uploads]);
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void analyzeUploads();
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -110,12 +127,32 @@ export function UploadPanel() {
     setError(null);
   }
 
-  function clearUploads() {
+  const clearUploads = useCallback(() => {
     setUploads([]);
     setMergedResult(null);
     setBatchNotes([]);
     setError(null);
-  }
+  }, []);
+
+  useEffect(() => {
+    function openFiles() {
+      inputRef.current?.click();
+    }
+
+    function analyzeFiles() {
+      formRef.current?.requestSubmit();
+    }
+
+    window.addEventListener("smartfinance:open-files", openFiles);
+    window.addEventListener("smartfinance:analyze-files", analyzeFiles);
+    window.addEventListener("smartfinance:clear-files", clearUploads);
+
+    return () => {
+      window.removeEventListener("smartfinance:open-files", openFiles);
+      window.removeEventListener("smartfinance:analyze-files", analyzeFiles);
+      window.removeEventListener("smartfinance:clear-files", clearUploads);
+    };
+  }, [clearUploads]);
 
   return (
     <div className="space-y-8">
@@ -141,7 +178,48 @@ export function UploadPanel() {
         </div>
       </section>
 
+      <section className="workspace-console">
+        <div className="workspace-console-main">
+          <div>
+            <div className="text-sm font-semibold text-brand">工作台狀態</div>
+            <div className="mt-1 text-2xl font-semibold text-ink">{workspaceState}</div>
+          </div>
+          <div className="workspace-progress" aria-label={`準備度 ${readinessPercent}%`}>
+            <span style={{ width: `${Math.min(readinessPercent, 100)}%` }} />
+          </div>
+        </div>
+        <div className="quick-action-grid">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="quick-action-button"
+          >
+            <span>加入檔案</span>
+            <kbd>⌘U</kbd>
+          </button>
+          <button
+            type="button"
+            onClick={() => formRef.current?.requestSubmit()}
+            disabled={isLoading || uploads.length === 0}
+            className="quick-action-button"
+          >
+            <span>讀取全部</span>
+            <kbd>⌘↵</kbd>
+          </button>
+          <button
+            type="button"
+            onClick={clearUploads}
+            disabled={isLoading || uploads.length === 0}
+            className="quick-action-button"
+          >
+            <span>清空佇列</span>
+            <kbd>clear</kbd>
+          </button>
+        </div>
+      </section>
+
       <form
+        ref={formRef}
         onSubmit={handleSubmit}
         className="surface-card p-6 sm:p-8"
       >

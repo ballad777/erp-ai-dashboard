@@ -1532,3 +1532,99 @@ python -m pytest
 - 這是本機 Docker Hub 連線逾時；Render 雲端部署時會由 Render 自行拉取基底映像並建置。
 - 目前 `gh` GitHub CLI 未安裝，且 GitHub connector 只能操作既有 repo，不能建立新 repo；需要使用者先建立 GitHub repository 或提供既有 repo 名稱。
 - Render free plan 可能冷啟動，且 generated outputs 屬暫存；若要正式多人長期使用，建議升級方案或改接持久化儲存。
+
+## 2026-06-10：Apple / iOS 風格產品體驗升級
+
+### 已完成檔案
+
+- `frontend/src/components/CommandCenter.tsx`
+- `frontend/src/components/SystemStatus.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/app/page.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/package.json`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 新增全站 Command Center：
+  - `⌘ / Ctrl + K` 開啟快捷指令。
+  - `⌘ / Ctrl + U` 在上傳頁開啟檔案選擇；其他頁面前往上傳工作台。
+  - `⌘ / Ctrl + Enter` 在上傳頁讀取全部檔案。
+  - `?` 開啟快捷指令。
+  - `Esc` 關閉快捷指令。
+- 新增真實系統狀態元件：
+  - 會呼叫 `/health`。
+  - 顯示在線、檢查中或需檢查。
+  - 顯示實際延遲毫秒。
+- 首頁新增更有層次的產品體驗：
+  - 控制中心區塊。
+  - 命令中心、工作台狀態、頁內程式碼三個系統細節。
+  - 更完整的細節探索區塊，整理已存在能力，不新增假功能。
+- 上傳頁新增工作台狀態列：
+  - 依目前檔案佇列、成功讀取、錯誤數與讀取狀態顯示工作台狀態。
+  - 顯示準備度進度條。
+  - 新增加入檔案、讀取全部、清空佇列快速動作，全部接到真實功能。
+- 視覺系統升級：
+  - 更接近 iOS 產品感的白底、玻璃、柔和陰影、焦點狀態、快捷 keycap、命令面板與控制中心層次。
+  - 保持原本青綠、天藍、深藍主色，不改成暗黑或過度霓虹。
+- 移除未使用且內容含舊品牌的圖片資產。
+- `npm run typecheck` 改為先執行 `next typegen`，避免乾淨環境缺少 Next route types。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm run dev
+```
+
+### 如何測試
+
+前端：
+
+```bash
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest
+```
+
+瀏覽器互動：
+
+- 桌機首頁 `/`：檢查 Command Center、系統狀態、控制中心區塊與水平溢出。
+- 桌機 `/upload`：檢查工作台狀態列、快速動作與 file input。
+- 手機 390 x 844：檢查首頁與上傳頁無水平溢出。
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過。
+- `python -m pytest`：16 passed。
+- Browser 桌機首頁：Command Center 可開啟；系統狀態有呼叫 `/health`；無水平溢出；console 無錯誤。
+- Browser Command Center：可從「前往上傳工作台」導到 `/upload`。
+- Browser 桌機上傳頁：工作台狀態列與三個快速動作存在；file input 存在；無水平溢出；console 無錯誤。
+- Browser 手機首頁與上傳頁 390px：無水平溢出；快捷 dock、上傳工作台與主要內容可見。
+
+### Known Issues
+
+- Command Center 目前只收納已存在的真實功能；若未來要加入更多快捷動作，需要先把對應 API 或 UI 功能做完。
+- 檔案選擇器由瀏覽器安全機制控制，只有使用者互動觸發時才能開啟。

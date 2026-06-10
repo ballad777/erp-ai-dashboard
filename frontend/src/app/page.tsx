@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
+import { SystemStatus } from "@/components/SystemStatus";
 
 const capabilities = [
   {
@@ -66,6 +67,35 @@ const analysisLayers = [
   }
 ];
 
+const systemMoments = [
+  {
+    title: "命令中心",
+    body: "把上傳、讀取與清空佇列收進同一個入口，讓常用動作不必來回找。",
+    detail: "⌘K"
+  },
+  {
+    title: "工作台狀態",
+    body: "即時讀取目前檔案數、成功數、錯誤數與後端健康狀態。",
+    detail: "Live"
+  },
+  {
+    title: "頁內程式碼",
+    body: "生成 Python 與 Notebook 後直接在介面內檢查內容，再下載交付。",
+    detail: "Code"
+  }
+];
+
+const refinementDetails = [
+  "多檔案佇列",
+  "合併分析",
+  "自動推薦模型",
+  "手動模型選擇",
+  "圖表類型選擇",
+  "金融指標",
+  "Word 報告",
+  "輸出檔保存"
+];
+
 export default function HomePage() {
   return (
     <AppShell active="home">
@@ -119,6 +149,33 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="control-center-band">
+        <div className="control-center-copy">
+          <h2>像一個真正的分析系統，而不是單次工具</h2>
+          <p>
+            從進站、上傳、讀取、分析到交付，每個動作都保留明確狀態與下一步，
+            讓操作節奏更像熟悉的系統工作流。
+          </p>
+        </div>
+        <div className="control-center-panel">
+          <div className="control-center-top">
+            <SystemStatus />
+            <span className="text-sm font-semibold text-slate-500">智慧工作流</span>
+          </div>
+          <div className="control-center-grid">
+            {systemMoments.map((item) => (
+              <div key={item.title} className="control-tile">
+                <div className="flex items-center justify-between gap-3">
+                  <h3>{item.title}</h3>
+                  <span>{item.detail}</span>
+                </div>
+                <p>{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section className="mb-8 grid gap-4 lg:grid-cols-4">
         {analysisLayers.map((layer, index) => (
           <article key={layer.title} className="layer-card">
@@ -131,6 +188,24 @@ export default function HomePage() {
             <p className="mt-4 text-sm leading-7 text-slate-600">{layer.body}</p>
           </article>
         ))}
+      </section>
+
+      <section className="deep-system-section">
+        <div className="deep-system-copy">
+          <h2>細節會慢慢浮現</h2>
+          <p>
+            初次使用可以只上傳資料；熟悉後可以切換自動推薦、手動選模型、
+            指定圖表、合併多檔，再把結果整理成程式碼與報告。
+          </p>
+        </div>
+        <div className="refinement-grid">
+          {refinementDetails.map((item, index) => (
+            <div key={item} className="refinement-chip">
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              {item}
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="grid gap-7 2xl:grid-cols-[0.95fr_1.05fr_1.05fr]">
