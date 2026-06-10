@@ -5,6 +5,7 @@ import { AgentReportPanel } from "@/components/AgentReportPanel";
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { FinancialAnalysisPanel } from "@/components/FinancialAnalysisPanel";
 import { ModelAnalysisPanel } from "@/components/ModelAnalysisPanel";
+import { SystemStatus } from "@/components/SystemStatus";
 import {
   analyzeDatasets,
   type DatasetAnalysis,
@@ -19,6 +20,14 @@ type DatasetUpload = {
   result: DatasetAnalysis | null;
   error: string | null;
   isLoading: boolean;
+};
+
+type ProgressStatus = "complete" | "active" | "ready" | "waiting" | "error";
+
+type ProgressStep = {
+  title: string;
+  detail: string;
+  status: ProgressStatus;
 };
 
 export function UploadPanel() {
@@ -53,6 +62,63 @@ export function UploadPanel() {
     if (totalBytes === 0) return "0 MB";
     return `${(totalBytes / 1024 / 1024).toFixed(2)} MB`;
   }, [uploads]);
+
+  const progressSteps = useMemo<ProgressStep[]>(() => {
+    const uploadStatus: ProgressStatus = uploads.length > 0 ? "complete" : "waiting";
+    const readStatus: ProgressStatus = failedCount > 0
+      ? "error"
+      : isLoading
+        ? "active"
+        : completedCount > 0
+          ? "complete"
+          : uploads.length > 0
+            ? "ready"
+            : "waiting";
+    const exploreStatus: ProgressStatus = completedCount > 0
+      ? "complete"
+      : isLoading
+        ? "active"
+        : "waiting";
+    const mergeStatus: ProgressStatus = mergedResult
+      ? "complete"
+      : completedCount >= 2
+        ? "ready"
+        : "waiting";
+    const analysisStatus: ProgressStatus = completedCount > 0 ? "ready" : "waiting";
+
+    return [
+      {
+        title: "資料上傳",
+        detail: uploads.length > 0 ? `已加入 ${uploads.length} 檔` : "等待加入檔案",
+        status: uploadStatus
+      },
+      {
+        title: "資料讀取",
+        detail: isLoading ? "後端正在解析檔案" : `${completedCount} 成功 / ${failedCount} 失敗`,
+        status: readStatus
+      },
+      {
+        title: "資料探索",
+        detail: completedCount > 0 ? "欄位、缺失值與摘要已回傳" : "讀取後自動建立",
+        status: exploreStatus
+      },
+      {
+        title: "合併分析",
+        detail: mergedResult ? "合併輪廓已建立" : "成功讀取 2 檔以上可啟用",
+        status: mergeStatus
+      },
+      {
+        title: "模型與金融分析",
+        detail: completedCount > 0 ? "可選目標欄位與分析模式" : "等待資料摘要",
+        status: analysisStatus
+      },
+      {
+        title: "報告與程式碼",
+        detail: completedCount > 0 ? "可在結果區生成與預覽" : "分析完成後啟用",
+        status: analysisStatus
+      }
+    ];
+  }, [completedCount, failedCount, isLoading, mergedResult, uploads.length]);
 
   const analyzeUploads = useCallback(async () => {
     if (uploads.length === 0) {
@@ -155,125 +221,91 @@ export function UploadPanel() {
   }, [clearUploads]);
 
   return (
-    <div className="space-y-8">
-      <section className="surface-card relative isolate overflow-hidden p-6 sm:p-8 lg:p-10">
-        <div className="hero-wave hero-wave-left" />
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-4xl">
-            <div className="inline-flex rounded-full border border-sky-200 bg-white/72 px-4 py-2 text-sm font-semibold text-brand">
-              分析工作台
-            </div>
-            <h1 className="mt-5 text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
-              上傳資料，開始建立洞察
-            </h1>
-            <p className="mt-4 max-w-3xl text-lg leading-8 text-muted">
-              匯入 CSV 或 Excel，系統會完成資料摘要、合併判斷、模型分析、金融指標與報告輸出。
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3 xl:max-w-[560px]">
-            <UploadMetric label="已加入" value={`${uploads.length} 檔`} />
-            <UploadMetric label="成功讀取" value={`${completedCount} 檔`} />
-            <UploadMetric label="總大小" value={totalSizeLabel} />
-          </div>
-        </div>
-      </section>
+    <div className="workbench-layout">
+      <WorkbenchSidebar
+        completedCount={completedCount}
+        failedCount={failedCount}
+        readinessPercent={readinessPercent}
+        totalSizeLabel={totalSizeLabel}
+        uploadCount={uploads.length}
+        workspaceState={workspaceState}
+      />
 
-      <section className="workspace-console">
-        <div className="workspace-console-main">
+      <main id="top" className="workbench-main">
+        <section className="workbench-topbar">
           <div>
-            <div className="text-sm font-semibold text-brand">工作台狀態</div>
-            <div className="mt-1 text-2xl font-semibold text-ink">{workspaceState}</div>
-          </div>
-          <div className="workspace-progress" aria-label={`準備度 ${readinessPercent}%`}>
-            <span style={{ width: `${Math.min(readinessPercent, 100)}%` }} />
-          </div>
-        </div>
-        <div className="quick-action-grid">
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            className="quick-action-button"
-          >
-            <span>加入檔案</span>
-            <kbd>⌘U</kbd>
-          </button>
-          <button
-            type="button"
-            onClick={() => formRef.current?.requestSubmit()}
-            disabled={isLoading || uploads.length === 0}
-            className="quick-action-button"
-          >
-            <span>讀取全部</span>
-            <kbd>⌘↵</kbd>
-          </button>
-          <button
-            type="button"
-            onClick={clearUploads}
-            disabled={isLoading || uploads.length === 0}
-            className="quick-action-button"
-          >
-            <span>清空佇列</span>
-            <kbd>clear</kbd>
-          </button>
-        </div>
-      </section>
-
-      <form
-        ref={formRef}
-        onSubmit={handleSubmit}
-        className="surface-card p-6 sm:p-8"
-      >
-        <div className="flex flex-col gap-7 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-4xl">
-            <h2 className="text-3xl font-semibold tracking-normal text-ink">
-              資料匯入
-            </h2>
-            <p className="mt-3 text-lg leading-8 text-muted">
-              可一次加入多個 CSV 或 Excel 檔案。系統會整批讀取檔案，
-              並在成功讀取兩個以上檔案時建立智慧合併分析。
+            <div className="workbench-kicker">上傳與分析工作台</div>
+            <h1>把資料放進來，讓系統接手判斷</h1>
+            <p>
+              多檔匯入後會先回傳真實欄位摘要，再依資料內容啟用合併分析、
+              模型推薦、金融指標與報告生成。
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="workbench-topbar-actions">
+            <StatusBadge status={workspaceState} />
             <button
               type="button"
-              onClick={clearUploads}
-              disabled={isLoading || uploads.length === 0}
-              className="h-12 rounded-xl border border-line bg-white px-6 text-base font-semibold text-ink transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:text-slate-400"
+              onClick={() => inputRef.current?.click()}
+              className="primary-action glow-button"
             >
-              清空檔案
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="glow-button h-12 rounded-xl bg-gradient-to-r from-brand via-sky-500 to-navy px-7 text-base font-semibold text-white transition disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {isLoading ? "整批讀取中..." : "讀取全部檔案"}
+              選擇檔案
             </button>
           </div>
-        </div>
+        </section>
 
-        <div
-          className="upload-dropzone mt-7 p-6 sm:p-7"
-          onClick={() => inputRef.current?.click()}
+        <form
+          ref={formRef}
+          onSubmit={handleSubmit}
+          id="data-upload"
+          className="upload-stage-card"
         >
-          <input
-            ref={inputRef}
-            className="sr-only"
-            type="file"
-            accept={acceptedTypes}
-            multiple
-            onChange={handleFileChange}
-          />
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="stage-card-header">
             <div>
-              <div className="text-lg font-semibold text-ink">
+              <span>01</span>
+              <h2>多檔資料上傳</h2>
+              <p>可一次選多個檔案，也能分批加入。相同檔案會自動避免重複加入。</p>
+            </div>
+            <div className="stage-actions">
+              <button
+                type="button"
+                onClick={clearUploads}
+                disabled={isLoading || uploads.length === 0}
+                className="quiet-button"
+              >
+                清空
+              </button>
+              <button
+                type="submit"
+                disabled={isLoading || uploads.length === 0}
+                className="primary-action glow-button"
+              >
+                {isLoading ? "讀取中..." : "讀取全部"}
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="upload-dropzone workbench-dropzone"
+            onClick={() => inputRef.current?.click()}
+          >
+            <input
+              ref={inputRef}
+              className="sr-only"
+              type="file"
+              accept={acceptedTypes}
+              multiple
+              onChange={handleFileChange}
+            />
+            <div className="dropzone-icon">
+              <UploadIcon />
+            </div>
+            <div>
+              <h3>
                 {uploads.length > 0
                   ? `已加入 ${uploads.length} 個檔案`
-                  : "選擇一個或多個 CSV / Excel 檔案"}
-              </div>
-              <div className="mt-2 text-base leading-7 text-muted">
-                可分多次加入檔案；相同檔名、大小與修改時間的檔案會自動避免重複加入。
-              </div>
+                  : "拖曳或選擇 CSV / Excel 檔案"}
+              </h3>
+              <p>支援 CSV、XLSX、XLS。讀取後會顯示每份資料的欄位、缺失值與數值摘要。</p>
             </div>
             <button
               type="button"
@@ -281,48 +313,34 @@ export function UploadPanel() {
                 event.stopPropagation();
                 inputRef.current?.click();
               }}
-              className="h-11 rounded-xl border border-sky-200 bg-white px-5 text-base font-semibold text-ink transition hover:border-brand hover:text-brand"
+              className="dropzone-button"
             >
               加入檔案
             </button>
           </div>
 
           {uploads.length > 0 ? (
-            <div className="mt-6 grid gap-3 lg:grid-cols-3">
+            <div className="upload-summary-grid">
               <UploadMetric label="檔案數" value={`${uploads.length}`} />
               <UploadMetric label="總大小" value={totalSizeLabel} />
-              <UploadMetric
-                label="讀取狀態"
-                value={`${completedCount} 成功 / ${failedCount} 失敗`}
-              />
+              <UploadMetric label="成功讀取" value={`${completedCount} 檔`} />
+              <UploadMetric label="失敗" value={`${failedCount} 檔`} />
             </div>
           ) : null}
 
           {uploads.length > 0 ? (
-            <div className="mt-5 grid gap-3">
+            <div className="file-queue">
               {uploads.map((upload) => (
-                <div
-                  key={upload.id}
-                  className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-white/82 px-4 py-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] md:flex-row md:items-center md:justify-between"
-                >
-                  <div>
-                    <div className="text-base font-semibold text-ink">
-                      {upload.file.name}
-                    </div>
-                    <div className="text-sm text-muted">
-                      {(upload.file.size / 1024 / 1024).toFixed(3)} MB
+                <div key={upload.id} className="file-row">
+                  <div className="file-row-main">
+                    <span className="file-icon">CSV</span>
+                    <div>
+                      <h3>{upload.file.name}</h3>
+                      <p>{(upload.file.size / 1024 / 1024).toFixed(3)} MB</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-sm font-semibold text-muted">
-                      {upload.isLoading
-                        ? "讀取中"
-                        : upload.result
-                          ? "已讀取"
-                          : upload.error
-                            ? "讀取失敗"
-                            : "等待讀取"}
-                    </div>
+                  <div className="file-row-actions">
+                    <FileStateLabel upload={upload} />
                     <button
                       type="button"
                       onClick={(event) => {
@@ -330,7 +348,7 @@ export function UploadPanel() {
                         removeUpload(upload.id);
                       }}
                       disabled={isLoading}
-                      className="h-9 rounded-xl border border-line px-3 text-sm font-semibold text-muted transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:text-slate-400"
+                      className="quiet-button is-small"
                     >
                       移除
                     </button>
@@ -339,135 +357,260 @@ export function UploadPanel() {
               ))}
             </div>
           ) : null}
-        </div>
 
-        {error ? (
-          <div className="mt-6 rounded-md border border-red-200 bg-red-50 px-5 py-4 text-base font-medium text-red-700">
-            {error}
-          </div>
-        ) : null}
-
-        {batchNotes.length > 0 ? (
-          <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-5">
-            <h2 className="text-base font-semibold text-amber-900">批次讀取備註</h2>
-            <ul className="mt-3 space-y-2 text-base leading-7 text-amber-900">
-              {batchNotes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </form>
-
-      {mergedResult ? (
-        <section className="surface-card space-y-7 border-brand/40 p-6 sm:p-8">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div className="max-w-5xl">
-              <div className="text-base font-semibold text-brand">智慧合併分析</div>
-              <h2 className="mt-2 text-3xl font-semibold text-ink">
-                合併資料集摘要
-              </h2>
-              <p className="mt-3 text-lg leading-8 text-muted">
-                已依欄位名稱合併成功讀取的檔案，並保留來源檔案欄位與來源列號。
-                你可以直接在合併資料上選擇目標欄位並執行模型分析。
-              </p>
+          {error ? (
+            <div className="mt-6 rounded-md border border-red-200 bg-red-50 px-5 py-4 text-base font-medium text-red-700">
+              {error}
             </div>
-            <div className="grid gap-3 sm:grid-cols-3 xl:max-w-[560px]">
-              <UploadMetric
-                label="來源檔案"
-                value={`${mergedResult.source_file_count}`}
-              />
-              <UploadMetric
-                label="合併列數"
-                value={mergedResult.row_count.toLocaleString()}
-              />
-              <UploadMetric
-                label="共同欄位"
-                value={mergedResult.common_columns.length.toLocaleString()}
-              />
+          ) : null}
+
+          {batchNotes.length > 0 ? (
+            <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-5">
+              <h2 className="text-base font-semibold text-amber-900">批次讀取備註</h2>
+              <ul className="mt-3 space-y-2 text-base leading-7 text-amber-900">
+                {batchNotes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
             </div>
-          </div>
+          ) : null}
+        </form>
 
-          <div className="rounded-2xl border border-teal-100 bg-teal-50/80 p-5">
-            <h3 className="text-base font-semibold text-teal-950">合併判斷</h3>
-            <ul className="mt-3 space-y-2 text-base leading-7 text-teal-950">
-              {mergedResult.merge_notes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-          </div>
-
-          <AnalysisResult result={mergedResult} />
-          <AgentReportPanel
-            dataset={mergedResult}
-            files={mergedFiles}
-            isMerged
-            title="合併資料 AI 分析與報告"
-            description="整合資料摘要、模型分析、金融分析、圖表整理與 Word 報告輸出。"
-          />
-          <FinancialAnalysisPanel
-            dataset={mergedResult}
-            files={mergedFiles}
-            isMerged
-            title="合併資料金融分析"
-            description="當合併資料含有日期與價格欄位時，系統會重新合併成功讀取的檔案並產出金融指標、圖表與指標 CSV。"
-          />
-          <ModelAnalysisPanel
-            dataset={mergedResult}
-            files={mergedFiles}
-            isMerged
-            title="合併資料模型分析"
-            description="系統會重新將成功讀取的檔案合併後訓練模型，適合比較多份資料合在一起後的整體趨勢。"
-          />
-        </section>
-      ) : null}
-
-      {uploads.length > 0 ? (
-        <section className="space-y-10">
-          {uploads.map((upload, index) => (
-            <article key={upload.id} className="space-y-7">
-              <div className="surface-card p-5 sm:p-6">
-                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h2 className="text-2xl font-semibold text-ink">
-                      檔案 {index + 1}：{upload.file.name}
-                    </h2>
-                    <p className="mt-2 text-base text-muted">
-                      每個檔案仍可獨立顯示摘要與執行模型分析。
-                    </p>
-                  </div>
-                  <span className="text-base font-semibold text-muted">
-                    {upload.result
-                      ? "資料讀取完成"
-                      : upload.error
-                        ? "資料讀取失敗"
-                        : upload.isLoading
-                          ? "資料讀取中"
-                          : "尚未讀取"}
-                  </span>
-                </div>
+        {mergedResult ? (
+          <section id="merge-analysis" className="analysis-stack">
+            <div className="result-intro-card">
+              <div>
+                <span>02</span>
+                <h2>智慧合併分析</h2>
+                <p>
+                  已依欄位名稱合併成功讀取的檔案，並保留來源檔案欄位與來源列號。
+                  你可以直接在合併資料上執行模型、金融與報告分析。
+                </p>
               </div>
+              <div className="upload-summary-grid is-compact">
+                <UploadMetric label="來源檔案" value={`${mergedResult.source_file_count}`} />
+                <UploadMetric label="合併列數" value={mergedResult.row_count.toLocaleString()} />
+                <UploadMetric label="共同欄位" value={mergedResult.common_columns.length.toLocaleString()} />
+              </div>
+            </div>
 
-              {upload.error ? (
-                <div className="rounded-md border border-red-200 bg-red-50 px-5 py-4 text-base font-medium text-red-700">
-                  {upload.error}
+            <div className="merge-notes">
+              <h3>合併判斷</h3>
+              <ul>
+                {mergedResult.merge_notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+
+            <AnalysisResult result={mergedResult} />
+            <AgentReportPanel
+              dataset={mergedResult}
+              files={mergedFiles}
+              isMerged
+              title="合併資料 AI 分析與報告"
+              description="整合資料摘要、模型分析、金融分析、圖表整理與 Word 報告輸出。"
+            />
+            <FinancialAnalysisPanel
+              dataset={mergedResult}
+              files={mergedFiles}
+              isMerged
+              title="合併資料金融分析"
+              description="當合併資料含有日期與價格欄位時，系統會重新合併成功讀取的檔案並產出金融指標、圖表與指標 CSV。"
+            />
+            <ModelAnalysisPanel
+              dataset={mergedResult}
+              files={mergedFiles}
+              isMerged
+              title="合併資料模型分析"
+              description="系統會重新將成功讀取的檔案合併後訓練模型，適合比較多份資料合在一起後的整體趨勢。"
+            />
+          </section>
+        ) : null}
+
+        {uploads.length > 0 ? (
+          <section id="individual-analysis" className="analysis-stack">
+            {uploads.map((upload, index) => (
+              <article key={upload.id} className="dataset-result-block">
+                <div className="result-intro-card">
+                  <div>
+                    <span>{String(index + 3).padStart(2, "0")}</span>
+                    <h2>檔案 {index + 1}：{upload.file.name}</h2>
+                    <p>每個檔案仍可獨立顯示摘要，並執行模型、金融、報告與程式碼生成。</p>
+                  </div>
+                  <FileStateLabel upload={upload} />
                 </div>
-              ) : null}
 
-              {upload.result ? (
-                <>
-                  <AnalysisResult result={upload.result} />
-                  <AgentReportPanel dataset={upload.result} file={upload.file} />
-                  <FinancialAnalysisPanel dataset={upload.result} file={upload.file} />
-                  <ModelAnalysisPanel dataset={upload.result} file={upload.file} />
-                </>
-              ) : null}
-            </article>
-          ))}
+                {upload.error ? (
+                  <div className="rounded-md border border-red-200 bg-red-50 px-5 py-4 text-base font-medium text-red-700">
+                    {upload.error}
+                  </div>
+                ) : null}
+
+                {upload.result ? (
+                  <>
+                    <AnalysisResult result={upload.result} />
+                    <AgentReportPanel dataset={upload.result} file={upload.file} />
+                    <FinancialAnalysisPanel dataset={upload.result} file={upload.file} />
+                    <ModelAnalysisPanel dataset={upload.result} file={upload.file} />
+                  </>
+                ) : null}
+              </article>
+            ))}
+          </section>
+        ) : null}
+      </main>
+
+      <aside className="workbench-rail">
+        <AnalysisProgressRail steps={progressSteps} />
+        <section className="rail-card">
+          <div className="rail-card-title">快速鍵</div>
+          <div className="shortcut-list">
+            <Shortcut label="開啟命令中心" command="⌘ K" />
+            <Shortcut label="選擇檔案" command="⌘ U" />
+            <Shortcut label="讀取全部" command="⌘ ↵" />
+          </div>
         </section>
-      ) : null}
+        <section className="rail-card">
+          <div className="rail-card-title">系統狀態</div>
+          <SystemStatus />
+          <p className="rail-note">前端只顯示後端回傳的真實分析結果。</p>
+        </section>
+      </aside>
     </div>
   );
+}
+
+function WorkbenchSidebar({
+  completedCount,
+  failedCount,
+  readinessPercent,
+  totalSizeLabel,
+  uploadCount,
+  workspaceState
+}: {
+  completedCount: number;
+  failedCount: number;
+  readinessPercent: number;
+  totalSizeLabel: string;
+  uploadCount: number;
+  workspaceState: string;
+}) {
+  const items = [
+    { label: "資料匯入", href: "#data-upload" },
+    { label: "資料探索", href: "#individual-analysis" },
+    { label: "合併分析", href: "#merge-analysis" },
+    { label: "模型分析", href: "#individual-analysis" },
+    { label: "金融分析", href: "#individual-analysis" },
+    { label: "報告中心", href: "#individual-analysis" }
+  ];
+
+  return (
+    <aside className="workbench-sidebar">
+      <div className="sidebar-brand-row">
+        <div className="brand-mark">智</div>
+        <div>
+          <strong>智能金融資料分析</strong>
+          <span>{workspaceState}</span>
+        </div>
+      </div>
+      <nav className="sidebar-nav">
+        {items.map((item, index) => (
+          <a key={item.label} href={item.href} className={index === 0 ? "is-active" : ""}>
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            {item.label}
+          </a>
+        ))}
+      </nav>
+      <div className="sidebar-summary">
+        <div>
+          <span>準備度</span>
+          <strong>{Math.min(readinessPercent, 100)}%</strong>
+        </div>
+        <div className="workspace-progress" aria-label={`準備度 ${readinessPercent}%`}>
+          <span style={{ width: `${Math.min(readinessPercent, 100)}%` }} />
+        </div>
+        <dl>
+          <div>
+            <dt>檔案</dt>
+            <dd>{uploadCount}</dd>
+          </div>
+          <div>
+            <dt>成功</dt>
+            <dd>{completedCount}</dd>
+          </div>
+          <div>
+            <dt>失敗</dt>
+            <dd>{failedCount}</dd>
+          </div>
+          <div>
+            <dt>大小</dt>
+            <dd>{totalSizeLabel}</dd>
+          </div>
+        </dl>
+      </div>
+    </aside>
+  );
+}
+
+function AnalysisProgressRail({ steps }: { steps: ProgressStep[] }) {
+  return (
+    <section className="rail-card">
+      <div className="rail-card-title">分析流程進度</div>
+      <div className="progress-list">
+        {steps.map((step) => (
+          <div key={step.title} className={`progress-step is-${step.status}`}>
+            <span className="progress-dot" />
+            <div>
+              <strong>{step.title}</strong>
+              <small>{step.detail}</small>
+            </div>
+            <em>{statusLabel(step.status)}</em>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return <span className="status-badge">{status}</span>;
+}
+
+function Shortcut({ label, command }: { label: string; command: string }) {
+  return (
+    <div className="shortcut-row">
+      <span>{label}</span>
+      <kbd>{command}</kbd>
+    </div>
+  );
+}
+
+function FileStateLabel({ upload }: { upload: DatasetUpload }) {
+  const label = upload.isLoading
+    ? "讀取中"
+    : upload.result
+      ? "已讀取"
+      : upload.error
+        ? "讀取失敗"
+        : "等待讀取";
+
+  return <span className={`file-state is-${stateClass(upload)}`}>{label}</span>;
+}
+
+function stateClass(upload: DatasetUpload) {
+  if (upload.isLoading) return "active";
+  if (upload.result) return "complete";
+  if (upload.error) return "error";
+  return "waiting";
+}
+
+function statusLabel(status: ProgressStatus) {
+  if (status === "complete") return "完成";
+  if (status === "active") return "執行中";
+  if (status === "ready") return "可執行";
+  if (status === "error") return "需處理";
+  return "等待中";
 }
 
 function createUpload(file: File): DatasetUpload {
@@ -482,9 +625,19 @@ function createUpload(file: File): DatasetUpload {
 
 function UploadMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-blue-100 bg-white/78 px-5 py-4 shadow-[0_12px_28px_rgba(15,23,42,0.045)]">
-      <div className="text-sm font-semibold text-muted">{label}</div>
-      <div className="mt-1 break-words text-xl font-semibold text-ink">{value}</div>
+    <div className="upload-metric">
+      <div>{label}</div>
+      <strong>{value}</strong>
     </div>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 16V7" />
+      <path d="m8 11 4-4 4 4" />
+      <path d="M7 18.5H6.5a4.5 4.5 0 0 1-.4-8.98A6 6 0 0 1 17.7 8.4 4.75 4.75 0 0 1 18 18.5h-.8" />
+    </svg>
   );
 }

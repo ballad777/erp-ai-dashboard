@@ -1628,3 +1628,97 @@ python -m pytest
 
 - Command Center 目前只收納已存在的真實功能；若未來要加入更多快捷動作，需要先把對應 API 或 UI 功能做完。
 - 檔案選擇器由瀏覽器安全機制控制，只有使用者互動觸發時才能開啟。
+
+## 2026-06-10：清晰流程版首頁與上傳工作台重整
+
+### 已完成檔案
+
+- `frontend/src/app/page.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/app/globals.css`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 首頁重新整理為更接近參考圖的產品型版面：
+  - 左側清楚說明「讓資料說話，讓決策更智慧」。
+  - 右側產品預覽面板顯示資料任務、指標、模型趨勢與流程。
+  - 下方以五步流程呈現：資料匯入、資料探索、模型分析、金融分析、報告輸出。
+  - 加入多層分析引擎區塊，說明資料層、模型層、金融層與交付層。
+- 上傳頁改成工作台式結構：
+  - 左側流程導覽與準備度摘要。
+  - 中央多檔上傳、檔案佇列、合併分析與各檔分析結果。
+  - 右側分析流程進度、快捷鍵與真實系統狀態。
+- 保留並串接原本所有真實功能：
+  - 多檔 `input[type=file][multiple]`。
+  - `POST /api/datasets/analyze-multiple`。
+  - 合併分析、模型分析、金融分析、AI 協作報告與程式碼生成面板。
+- 視覺上降低雜訊與霓虹感，改為白底、清楚層級、玻璃面板、柔和陰影與較穩定的資訊密度。
+- 新增響應式規則，桌機為左側欄、主內容、右側欄，手機自動收成單欄。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm run dev
+```
+
+### 如何測試
+
+前端：
+
+```bash
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest
+```
+
+瀏覽器：
+
+1. 打開 `http://127.0.0.1:3000/`。
+2. 確認首頁有產品預覽、五步流程與多層分析引擎。
+3. 打開 `http://127.0.0.1:3000/upload`。
+4. 確認上傳頁有左側流程導覽、中央上傳區與右側進度欄。
+5. 用手機寬度 390 x 844 檢查首頁與上傳頁沒有水平捲動。
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過。
+- `python -m pytest`：16 passed。
+- `curl http://127.0.0.1:3000/health`：回傳 `{"status":"ok","service":"智能金融資料分析 API"}`。
+- Browser DOM 驗證：
+  - 桌機首頁 1440 x 950：無水平溢出，5 個流程卡、4 個引擎卡、產品預覽存在。
+  - 桌機上傳頁 1440 x 950：無水平溢出，`multiple` 上傳 input 存在，6 個流程進度、3 個右側欄卡片存在。
+  - 手機首頁 390 x 844：無水平溢出，首頁主標與產品預覽存在。
+  - 手機上傳頁 390 x 844：無水平溢出，工作台、上傳區、流程進度與多檔 input 存在。
+  - Browser console error/warn：空。
+
+### 下一階段要做什麼
+
+- 若要再提升產品感，可針對模型分析、金融分析、AI 協作報告三個結果面板做同一套工作台風格重整。
+- 若要公開部署，依 `DEPLOYMENT.md` 推到 GitHub 後使用 Render Blueprint 建立正式服務。
+
+### Known Issues
+
+- Browser plugin 在本次 session 的 `Page.captureScreenshot` 連續逾時，因此本輪視覺驗收以 DOM snapshot、console logs、viewport 尺寸與水平溢出量測為主，未取得可附上的 Browser 截圖。
+- 首頁右側裝飾光帶會在幾何上超出 viewport，但父層 `overflow: hidden` 生效，實際 `scrollWidth` 與 `clientWidth` 相同，不會造成水平捲動。
