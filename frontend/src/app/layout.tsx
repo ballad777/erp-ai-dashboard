@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { WorkspaceProvider } from "@/components/WorkspaceProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-Hant" data-scroll-behavior="smooth">
-      <body>{children}</body>
+      <body>
+        <WorkspaceProvider>{children}</WorkspaceProvider>
+      </body>
     </html>
   );
 }

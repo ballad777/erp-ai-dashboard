@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { SystemStatus } from "@/components/SystemStatus";
 
 const workflow = [
   {
@@ -49,11 +48,17 @@ const engineLayers = [
   }
 ];
 
-const liveSignals = [
-  { label: "資料集", value: "12" },
-  { label: "模型執行", value: "28" },
-  { label: "圖表輸出", value: "9" },
-  { label: "節省時間", value: "68h" }
+const previewCapabilities = [
+  { label: "資料匯入", value: "多檔" },
+  { label: "模型策略", value: "自動 / 手動" },
+  { label: "金融模式", value: "偵測後啟用" },
+  { label: "輸出方式", value: "頁內預覽" }
+];
+
+const decisionSignals = [
+  "目標欄位的資料型態與唯一值比例",
+  "資料列數、特徵數、缺失比例與數值欄位分布",
+  "日期與價格欄位是否形成金融時間序列"
 ];
 
 export default function HomePage() {
@@ -126,9 +131,22 @@ export default function HomePage() {
             決定適合的分析方向。使用者仍可以手動覆寫模型與圖表選項。
           </p>
           <div className="engine-status">
-            <SystemStatus />
             <strong>所有結果都由後端實際運算產生</strong>
           </div>
+          <details className="decision-disclosure">
+            <summary>
+              <span>查看自動判斷依據</span>
+              <Icon name="chevron" className="h-4 w-4" />
+            </summary>
+            <div className="disclosure-content">
+              {decisionSignals.map((signal, index) => (
+                <div key={signal}>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <p>{signal}</p>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
         <div className="engine-grid">
           {engineLayers.map((layer, index) => (
@@ -182,11 +200,11 @@ function ProductPreview() {
             <span>分析總覽</span>
             <h2>今天的資料任務</h2>
           </div>
-          <SystemStatus compact />
+          <span className="preview-session-note">等待資料</span>
         </div>
 
         <div className="preview-metrics">
-          {liveSignals.map((signal) => (
+          {previewCapabilities.map((signal) => (
             <div key={signal.label}>
               <span>{signal.label}</span>
               <strong>{signal.value}</strong>
@@ -195,24 +213,24 @@ function ProductPreview() {
         </div>
 
         <div className="preview-dashboard-grid">
-          <div className="preview-chart">
-            <div className="preview-card-title">模型表現趨勢</div>
-            <div className="chart-lines" aria-hidden="true">
-              <span />
-              <span />
-              <span />
+          <div className="preview-empty-state">
+            <div className="preview-upload-icon">
+              <Icon name="upload" className="h-7 w-7" />
+            </div>
+            <div>
+              <div className="preview-card-title">等待資料匯入</div>
+              <p>加入 CSV 或 Excel 後，系統才會顯示真實摘要與模型建議。</p>
             </div>
           </div>
-          <div className="preview-donut">
-            <div className="donut-ring">
-              <strong>65%</strong>
-              <small>最佳模型</small>
-            </div>
-            <ul>
-              <li>資料品質</li>
-              <li>模型比較</li>
-              <li>報告輸出</li>
-            </ul>
+          <div className="preview-status-list">
+            <div className="preview-card-title">分析流程</div>
+            {["資料上傳", "資料讀取", "模型分析", "報告生成"].map((item, index) => (
+              <div key={item} className={index === 0 ? "is-current" : ""}>
+                <span />
+                <strong>{item}</strong>
+                <small>{index === 0 ? "等待中" : "尚未開始"}</small>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -255,6 +273,14 @@ function Icon({ name, className = "" }: { name: string; className?: string }) {
       <svg {...commonProps}>
         <path d="M5 12h14" />
         <path d="m13 6 6 6-6 6" />
+      </svg>
+    );
+  }
+
+  if (name === "chevron") {
+    return (
+      <svg {...commonProps}>
+        <path d="m8 10 4 4 4-4" />
       </svg>
     );
   }

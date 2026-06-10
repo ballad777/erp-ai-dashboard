@@ -1,26 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentReportPanel } from "@/components/AgentReportPanel";
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { FinancialAnalysisPanel } from "@/components/FinancialAnalysisPanel";
 import { ModelAnalysisPanel } from "@/components/ModelAnalysisPanel";
-import { SystemStatus } from "@/components/SystemStatus";
 import {
-  analyzeDatasets,
-  type DatasetAnalysis,
-  type MergedDatasetAnalysis
+  useWorkspace,
+  type DatasetUploadState
+} from "@/components/WorkspaceProvider";
+import {
+  analyzeDatasets
 } from "@/lib/api";
 
 const acceptedTypes = ".csv,.xlsx,.xls";
-
-type DatasetUpload = {
-  id: string;
-  file: File;
-  result: DatasetAnalysis | null;
-  error: string | null;
-  isLoading: boolean;
-};
 
 type ProgressStatus = "complete" | "active" | "ready" | "waiting" | "error";
 
@@ -30,13 +23,27 @@ type ProgressStep = {
   status: ProgressStatus;
 };
 
+type WorkspaceNotice = {
+  tone: "success" | "info" | "warning" | "error";
+  title: string;
+  detail: string;
+};
+
 export function UploadPanel() {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const formRef = useRef<HTMLFormElement | null>(null);
-  const [uploads, setUploads] = useState<DatasetUpload[]>([]);
-  const [mergedResult, setMergedResult] = useState<MergedDatasetAnalysis | null>(null);
-  const [batchNotes, setBatchNotes] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    uploads,
+    setUploads,
+    mergedResult,
+    setMergedResult,
+    batchNotes,
+    setBatchNotes,
+    error,
+    setError,
+    setPanelStates,
+    clearWorkspace
+  } = useWorkspace();
+  const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
 
   const isLoading = uploads.some((upload) => upload.isLoading);
   const completedUploads = uploads.filter((upload) => upload.result);
@@ -120,15 +127,27 @@ export function UploadPanel() {
     ];
   }, [completedCount, failedCount, isLoading, mergedResult, uploads.length]);
 
-  const analyzeUploads = useCallback(async () => {
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  async function analyzeUploads() {
     if (uploads.length === 0) {
       setError("請先選擇至少一個 CSV 或 Excel 檔案。");
+      setNotice({
+        tone: "warning",
+        title: "尚未加入資料",
+        detail: "請先選擇至少一個 CSV 或 Excel 檔案。"
+      });
       return;
     }
 
     setError(null);
     setMergedResult(null);
     setBatchNotes([]);
+    setPanelStates({});
     setUploads((current) =>
       current.map((upload) => ({
         ...upload,
@@ -153,6 +172,16 @@ export function UploadPanel() {
       );
       setMergedResult(batchResult.merged);
       setBatchNotes(batchResult.notes);
+      const successfulCount = batchResult.datasets.filter((item) => item.success).length;
+      const unsuccessfulCount = batchResult.datasets.length - successfulCount;
+      setNotice({
+        tone: unsuccessfulCount > 0 ? "warning" : "success",
+        title: unsuccessfulCount > 0 ? "部分檔案需要檢查" : "資料讀取完成",
+        detail:
+          unsuccessfulCount > 0
+            ? `${successfulCount} 個成功，${unsuccessfulCount} 個失敗。`
+            : `${successfulCount} 個檔案已完成真實後端分析。`
+      });
     } catch (caughtError) {
       setUploads((current) =>
         current.map((upload) => ({
@@ -163,8 +192,13 @@ export function UploadPanel() {
       setError(
         caughtError instanceof Error ? caughtError.message : "多檔資料集分析失敗。"
       );
+      setNotice({
+        tone: "error",
+        title: "資料讀取失敗",
+        detail: caughtError instanceof Error ? caughtError.message : "多檔資料集分析失敗。"
+      });
     }
-  }, [uploads]);
+  }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,55 +207,63 @@ export function UploadPanel() {
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    const existingIds = new Set(uploads.map((upload) => upload.id));
+    const newUploads = files
+      .map(createUpload)
+      .filter((upload) => !existingIds.has(upload.id));
+
     setUploads((current) => {
-      const existingIds = new Set(current.map((upload) => upload.id));
-      const newUploads = files
-        .map(createUpload)
-        .filter((upload) => !existingIds.has(upload.id));
-      return [...current, ...newUploads];
+      const currentIds = new Set(current.map((upload) => upload.id));
+      return [...current, ...newUploads.filter((upload) => !currentIds.has(upload.id))];
     });
     setMergedResult(null);
     setBatchNotes([]);
     setError(null);
+    if (newUploads.length > 0) {
+      setNotice({
+        tone: "info",
+        title: "檔案已加入",
+        detail: `${newUploads.length} 個檔案已加入等待佇列。`
+      });
+    } else if (files.length > 0) {
+      setNotice({
+        tone: "warning",
+        title: "沒有新增檔案",
+        detail: "選取的檔案已存在於目前佇列。"
+      });
+    }
     event.target.value = "";
   }
 
   function removeUpload(id: string) {
+    const removedFile = uploads.find((upload) => upload.id === id);
     setUploads((current) => current.filter((upload) => upload.id !== id));
     setMergedResult(null);
     setBatchNotes([]);
     setError(null);
+    setPanelStates({});
+    setNotice({
+      tone: "info",
+      title: "已移除檔案",
+      detail: removedFile?.file.name ?? "檔案已從等待佇列移除。"
+    });
   }
 
-  const clearUploads = useCallback(() => {
-    setUploads([]);
-    setMergedResult(null);
-    setBatchNotes([]);
-    setError(null);
-  }, []);
-
-  useEffect(() => {
-    function openFiles() {
-      inputRef.current?.click();
-    }
-
-    function analyzeFiles() {
-      formRef.current?.requestSubmit();
-    }
-
-    window.addEventListener("smartfinance:open-files", openFiles);
-    window.addEventListener("smartfinance:analyze-files", analyzeFiles);
-    window.addEventListener("smartfinance:clear-files", clearUploads);
-
-    return () => {
-      window.removeEventListener("smartfinance:open-files", openFiles);
-      window.removeEventListener("smartfinance:analyze-files", analyzeFiles);
-      window.removeEventListener("smartfinance:clear-files", clearUploads);
-    };
-  }, [clearUploads]);
+  function clearUploads() {
+    clearWorkspace();
+    setNotice({
+      tone: "info",
+      title: "工作台已清空",
+      detail: "檔案佇列與目前分析狀態已重置。"
+    });
+  }
 
   return (
-    <div className="workbench-layout">
+    <>
+      {notice ? (
+        <WorkspaceToast notice={notice} onClose={() => setNotice(null)} />
+      ) : null}
+      <div className="workbench-layout">
       <WorkbenchSidebar
         completedCount={completedCount}
         failedCount={failedCount}
@@ -253,8 +295,9 @@ export function UploadPanel() {
           </div>
         </section>
 
+        <AnalysisProgressRail steps={progressSteps} />
+
         <form
-          ref={formRef}
           onSubmit={handleSubmit}
           id="data-upload"
           className="upload-stage-card"
@@ -365,14 +408,17 @@ export function UploadPanel() {
           ) : null}
 
           {batchNotes.length > 0 ? (
-            <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-5">
-              <h2 className="text-base font-semibold text-amber-900">批次讀取備註</h2>
-              <ul className="mt-3 space-y-2 text-base leading-7 text-amber-900">
+            <details className="inline-disclosure is-warning" open>
+              <summary>
+                <span>批次讀取備註</span>
+                <ChevronIcon />
+              </summary>
+              <ul className="disclosure-content">
                 {batchNotes.map((note) => (
                   <li key={note}>{note}</li>
                 ))}
               </ul>
-            </div>
+            </details>
           ) : null}
         </form>
 
@@ -394,14 +440,17 @@ export function UploadPanel() {
               </div>
             </div>
 
-            <div className="merge-notes">
-              <h3>合併判斷</h3>
-              <ul>
+            <details className="merge-notes" open>
+              <summary>
+                <span>合併判斷</span>
+                <ChevronIcon />
+              </summary>
+              <ul className="disclosure-content">
                 {mergedResult.merge_notes.map((note) => (
                   <li key={note}>{note}</li>
                 ))}
               </ul>
-            </div>
+            </details>
 
             <AnalysisResult result={mergedResult} />
             <AgentReportPanel
@@ -460,23 +509,31 @@ export function UploadPanel() {
           </section>
         ) : null}
       </main>
+      </div>
+    </>
+  );
+}
 
-      <aside className="workbench-rail">
-        <AnalysisProgressRail steps={progressSteps} />
-        <section className="rail-card">
-          <div className="rail-card-title">快速鍵</div>
-          <div className="shortcut-list">
-            <Shortcut label="開啟命令中心" command="⌘ K" />
-            <Shortcut label="選擇檔案" command="⌘ U" />
-            <Shortcut label="讀取全部" command="⌘ ↵" />
-          </div>
-        </section>
-        <section className="rail-card">
-          <div className="rail-card-title">系統狀態</div>
-          <SystemStatus />
-          <p className="rail-note">前端只顯示後端回傳的真實分析結果。</p>
-        </section>
-      </aside>
+function WorkspaceToast({
+  notice,
+  onClose
+}: {
+  notice: WorkspaceNotice;
+  onClose: () => void;
+}) {
+  return (
+    <div className={`workspace-toast is-${notice.tone}`} role="status" aria-live="polite">
+      <span className="workspace-toast-dot" />
+      <div>
+        <strong>{notice.title}</strong>
+        <p>{notice.detail}</p>
+      </div>
+      <button type="button" onClick={onClose} aria-label="關閉通知">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="m7 7 10 10" />
+          <path d="M17 7 7 17" />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -555,7 +612,7 @@ function WorkbenchSidebar({
 
 function AnalysisProgressRail({ steps }: { steps: ProgressStep[] }) {
   return (
-    <section className="rail-card">
+    <section className="rail-card analysis-progress-card">
       <div className="rail-card-title">分析流程進度</div>
       <div className="progress-list">
         {steps.map((step) => (
@@ -577,16 +634,24 @@ function StatusBadge({ status }: { status: string }) {
   return <span className="status-badge">{status}</span>;
 }
 
-function Shortcut({ label, command }: { label: string; command: string }) {
+function ChevronIcon() {
   return (
-    <div className="shortcut-row">
-      <span>{label}</span>
-      <kbd>{command}</kbd>
-    </div>
+    <svg
+      className="disclosure-chevron"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m8 10 4 4 4-4" />
+    </svg>
   );
 }
 
-function FileStateLabel({ upload }: { upload: DatasetUpload }) {
+function FileStateLabel({ upload }: { upload: DatasetUploadState }) {
   const label = upload.isLoading
     ? "讀取中"
     : upload.result
@@ -598,7 +663,7 @@ function FileStateLabel({ upload }: { upload: DatasetUpload }) {
   return <span className={`file-state is-${stateClass(upload)}`}>{label}</span>;
 }
 
-function stateClass(upload: DatasetUpload) {
+function stateClass(upload: DatasetUploadState) {
   if (upload.isLoading) return "active";
   if (upload.result) return "complete";
   if (upload.error) return "error";
@@ -613,7 +678,7 @@ function statusLabel(status: ProgressStatus) {
   return "等待中";
 }
 
-function createUpload(file: File): DatasetUpload {
+function createUpload(file: File): DatasetUploadState {
   return {
     id: `${file.name}-${file.lastModified}-${file.size}`,
     file,

@@ -1,6 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import {
+  useWorkspacePanelState,
+  workspaceSourceKey
+} from "@/components/WorkspaceProvider";
 import {
   analyzeFinance,
   analyzeMergedFinance,
@@ -42,11 +46,28 @@ export function FinancialAnalysisPanel({
 }: FinancialAnalysisPanelProps) {
   const dateCandidates = useMemo(() => rankDateColumns(dataset), [dataset]);
   const priceCandidates = useMemo(() => rankPriceColumns(dataset), [dataset]);
-  const [dateColumn, setDateColumn] = useState("__auto__");
-  const [priceColumn, setPriceColumn] = useState("__auto__");
-  const [result, setResult] = useState<FinancialAnalysis | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const sourceKey = workspaceSourceKey(file, files, isMerged);
+  const [dateColumn, setDateColumn] = useWorkspacePanelState(
+    `${sourceKey}:finance:date-column`,
+    "__auto__"
+  );
+  const [priceColumn, setPriceColumn] = useWorkspacePanelState(
+    `${sourceKey}:finance:price-column`,
+    "__auto__"
+  );
+  const [result, setResult] =
+    useWorkspacePanelState<FinancialAnalysis | null>(
+      `${sourceKey}:finance:result`,
+      null
+    );
+  const [error, setError] = useWorkspacePanelState<string | null>(
+    `${sourceKey}:finance:error`,
+    null
+  );
+  const [isLoading, setIsLoading] = useWorkspacePanelState(
+    `${sourceKey}:finance:loading`,
+    false
+  );
 
   const hasFinancialShape = dateCandidates.length > 0 && priceCandidates.length > 0;
 

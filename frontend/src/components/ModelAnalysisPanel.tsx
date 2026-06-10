@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import {
+  useWorkspacePanelState,
+  workspaceSourceKey
+} from "@/components/WorkspaceProvider";
 import {
   analyzeMergedModels,
   analyzeModels,
@@ -197,26 +201,49 @@ export function ModelAnalysisPanel({
     recommendedTargets.find((column) => dataset.columns.includes(column)) ??
     dataset.columns[dataset.columns.length - 1] ??
     "";
-  const [targetColumn, setTargetColumn] = useState(defaultTarget);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("auto");
+  const sourceKey = workspaceSourceKey(file, files, isMerged);
+  const [targetColumn, setTargetColumn] = useWorkspacePanelState(
+    `${sourceKey}:model:target`,
+    defaultTarget
+  );
+  const [analysisMode, setAnalysisMode] = useWorkspacePanelState<AnalysisMode>(
+    `${sourceKey}:model:analysis-mode`,
+    "auto"
+  );
   const [chartSelectionMode, setChartSelectionMode] =
-    useState<ChartSelectionMode>("auto");
+    useWorkspacePanelState<ChartSelectionMode>(
+      `${sourceKey}:model:chart-selection`,
+      "auto"
+    );
   const [modelSelectionMode, setModelSelectionMode] =
-    useState<ModelSelectionMode>("auto");
-  const [automlMode, setAutomlMode] = useState<AutoMLMode>("quick");
-  const [selectedModels, setSelectedModels] = useState<string[]>([
-    "ridge",
-    "random_forest",
-    "gradient_boosting_regressor"
-  ]);
-  const [selectedCharts, setSelectedCharts] = useState<string[]>([
-    "model_comparison",
-    "feature_importance",
-    "predicted_vs_actual"
-  ]);
-  const [result, setResult] = useState<ModelAnalysis | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+    useWorkspacePanelState<ModelSelectionMode>(
+      `${sourceKey}:model:model-selection`,
+      "auto"
+    );
+  const [automlMode, setAutomlMode] = useWorkspacePanelState<AutoMLMode>(
+    `${sourceKey}:model:automl`,
+    "quick"
+  );
+  const [selectedModels, setSelectedModels] = useWorkspacePanelState<string[]>(
+    `${sourceKey}:model:selected-models`,
+    ["ridge", "random_forest", "gradient_boosting_regressor"]
+  );
+  const [selectedCharts, setSelectedCharts] = useWorkspacePanelState<string[]>(
+    `${sourceKey}:model:selected-charts`,
+    ["model_comparison", "feature_importance", "predicted_vs_actual"]
+  );
+  const [result, setResult] = useWorkspacePanelState<ModelAnalysis | null>(
+    `${sourceKey}:model:result`,
+    null
+  );
+  const [error, setError] = useWorkspacePanelState<string | null>(
+    `${sourceKey}:model:error`,
+    null
+  );
+  const [isLoading, setIsLoading] = useWorkspacePanelState(
+    `${sourceKey}:model:loading`,
+    false
+  );
 
   const visibleModelOptions = useMemo(() => {
     if (analysisMode === "auto") {
@@ -809,11 +836,25 @@ function CodeGenerationPanel({
       current.rmse < best.rmse ? current : best
     ).model_name;
   }, [result.model_results]);
-  const [selectedModelName, setSelectedModelName] = useState(bestModelName);
-  const [generatedCode, setGeneratedCode] = useState<GeneratedCode | null>(null);
-  const [codeError, setCodeError] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [previewMode, setPreviewMode] = useState<"python" | "notebook">("python");
+  const sourceKey = workspaceSourceKey(file, files, isMerged);
+  const codeKey = `${sourceKey}:code:${result.target_column}`;
+  const [selectedModelName, setSelectedModelName] = useWorkspacePanelState(
+    `${codeKey}:model`,
+    bestModelName
+  );
+  const [generatedCode, setGeneratedCode] =
+    useWorkspacePanelState<GeneratedCode | null>(`${codeKey}:result`, null);
+  const [codeError, setCodeError] = useWorkspacePanelState<string | null>(
+    `${codeKey}:error`,
+    null
+  );
+  const [isGenerating, setIsGenerating] = useWorkspacePanelState(
+    `${codeKey}:loading`,
+    false
+  );
+  const [previewMode, setPreviewMode] = useWorkspacePanelState<
+    "python" | "notebook"
+  >(`${codeKey}:preview`, "python");
 
   async function handleGenerateCode() {
     setIsGenerating(true);

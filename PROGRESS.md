@@ -1722,3 +1722,193 @@ python -m pytest
 
 - Browser plugin 在本次 session 的 `Page.captureScreenshot` 連續逾時，因此本輪視覺驗收以 DOM snapshot、console logs、viewport 尺寸與水平溢出量測為主，未取得可附上的 Browser 截圖。
 - 首頁右側裝飾光帶會在幾何上超出 viewport，但父層 `overflow: hidden` 生效，實際 `scrollWidth` 與 `clientWidth` 相同，不會造成水平捲動。
+
+## 2026-06-10：iOS 式視覺收斂與微互動
+
+### 已完成檔案
+
+- `frontend/src/app/globals.css`
+- `frontend/src/app/page.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/CommandCenter.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 全站字級與元件密度重新收斂：
+  - 縮小首頁主標、區塊標題、導覽、工作台標題、卡片文字與控制項。
+  - 調整行高、間距與固定尺寸，讓桌機與手機畫面更精緻且不易位移。
+- 降低霓虹感並加強層次：
+  - 主色改為低飽和藍綠與深藍灰。
+  - 建立低、中、高三層陰影 token，區分一般卡片、浮動面板與彈出層。
+  - 收斂背景光帶、按鈕漸層、焦點框與圖表裝飾色。
+- 加入 iOS 式微互動：
+  - Command Center 增加背景淡入、面板縮放滑入、圓形關閉按鈕與空搜尋狀態。
+  - 自動判斷依據、批次訊息、合併判斷、快速鍵及系統狀態改為可展開區塊。
+  - 展開箭頭會旋轉，內容採用淡入下移動畫。
+  - 工作台新增浮動通知，反映加入檔案、重複檔案、讀取完成、部分失敗、移除與清空等真實操作。
+- 移除首頁假分析數字：
+  - 首頁產品預覽改為「等待資料匯入」初始狀態。
+  - 只呈現平台真實支援能力與尚未開始的流程，不顯示虛構模型分數或分析量。
+  - 清除未使用的假圖表與固定百分比樣式。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm run dev
+```
+
+### 如何測試
+
+前端：
+
+```bash
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest
+```
+
+操作檢查：
+
+1. 開啟首頁，確認字級、低飽和色彩、卡片層次與「查看自動判斷依據」展開動畫。
+2. 使用 `⌘ K` 或 `Ctrl K` 開啟 Command Center，測試搜尋、空狀態、關閉按鈕與背景點擊關閉。
+3. 進入上傳工作台，加入多個檔案並確認通知內容由實際操作狀態產生。
+4. 展開或收合批次訊息、合併判斷、快速鍵與系統狀態。
+5. 執行真實資料讀取，確認通知、資料摘要與後續分析結果皆來自後端 API。
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過。
+- `python -m pytest`：16 passed。
+- 原始碼掃描：首頁已無固定 `65%`、`68h` 或 `liveSignals` 假展示資料。
+- `git diff --check`：通過。
+
+### 下一階段要做什麼
+
+- 將模型分析、金融分析、AI 協作報告與程式碼預覽面板進一步統一為相同的字級、展開層級與結果導覽方式。
+- 公開部署後，以真實手機與桌機瀏覽器執行完整上傳、分析、報告及程式碼預覽流程。
+
+### Known Issues
+
+- 本次 Browser plugin 在導覽本機頁面時發生 CDP `Page.enable` / `Page.navigate` 逾時，且測試用 `127.0.0.1:3001` 被工具安全政策拒絕，因此未取得本輪自動化截圖。
+- 本機已有一個無回應的 Next 開發程序占用 `3000`，production build 與 TypeScript 檢查仍正常；重新啟動開發伺服器前需先由本機終端結束該程序。
+
+## 2026-06-10：分析流程防遮擋與工作階段保留
+
+### 已完成檔案
+
+- `frontend/src/app/layout.tsx`
+- `frontend/src/app/page.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/FinancialAnalysisPanel.tsx`
+- `frontend/src/components/AgentReportPanel.tsx`
+- `frontend/src/components/WorkspaceProvider.tsx`
+- `frontend/src/components/CommandCenter.tsx`（移除）
+- `frontend/src/components/SystemStatus.tsx`（移除）
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 修正分析流程面板遮擋分析結果：
+  - 移除右側 sticky 浮動流程欄。
+  - 將六步分析進度改為主內容內的響應式摘要面板。
+  - 桌機採三欄兩列，手機採單欄排列。
+  - 工作台桌機版改為左側導覽加主內容兩欄，不再預留會壓縮結果區的右側欄。
+- 移除快捷鍵與系統在線介面：
+  - 導覽列不再顯示系統在線與延遲。
+  - 移除快捷按鈕、浮動快捷入口、命令面板與工作台快捷鍵說明。
+  - 首頁產品預覽不再顯示在線狀態。
+- 新增工作階段狀態保留：
+  - 根布局加入 `WorkspaceProvider`。
+  - 保留上傳檔案、資料摘要、合併結果與批次訊息。
+  - 保留模型設定、模型結果、金融結果、AI 工作流、Word 報告與程式碼預覽。
+  - 從工作台回首頁再回到工作台時，不會因頁面元件卸載而清除資料。
+  - 使用者按下「清空」或重新分析相同資料時，會同步清除失效的下游分析狀態。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+網站：
+
+```text
+http://127.0.0.1:3000
+```
+
+### 如何測試
+
+1. 進入 `/upload`，上傳並讀取至少一個 CSV 或 Excel。
+2. 執行模型、金融或報告分析。
+3. 點擊導覽列「首頁」，再點擊「上傳資料」。
+4. 確認檔案、摘要與已完成的分析結果仍存在。
+5. 確認分析流程進度位於主內容上方，不會覆蓋欄位清單、缺失值或模型結果。
+6. 確認首頁與工作台均無快捷鍵、浮動命令入口及系統在線標示。
+7. 點擊「清空」，確認工作階段資料與下游分析狀態全部移除。
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過。
+- `python -m pytest`：16 passed。
+- Browser 桌機 1440 x 950：
+  - 左側欄寬 238px，主內容寬 1120px。
+  - 流程進度面板寬 1120px 且 `position: static`。
+  - 無水平溢出，流程面板不會進入分析內容上方。
+- Browser 手機寬度 599px：
+  - 流程步驟改為單欄。
+  - 無水平溢出。
+- Browser 往返導覽：
+  - `/upload` → `/` → `/upload` 正常。
+  - 首頁與工作台均未出現「快速鍵」或「系統在線」。
+  - console error / warn：空。
+- 原始碼掃描：
+  - 正式頁面與元件已無 `CommandCenter`、`SystemStatus`、快捷鍵或系統在線引用。
+
+### 下一階段要做什麼
+
+- 以使用者實際上傳的多檔資料做完整手動驗收，包含模型結果、金融結果、報告與程式碼預覽的往返保留。
+- 若之後需要在整頁重新整理或關閉瀏覽器後仍保留檔案，可再評估 IndexedDB；目前不使用它，以避免未經使用者預期長期保存本機資料。
+
+### Known Issues
+
+- 瀏覽器基於安全限制，重新整理或關閉分頁後不能自動重新取得使用者的本機 `File`；目前保留範圍是同一瀏覽器分頁中的頁面往返。
+- Browser 自動化工具不能操作 macOS 原生檔案選擇器，因此本輪無法自動替使用者選取本機 sample dataset；檔案選擇後的狀態結構已通過 TypeScript 與 production build 驗證。

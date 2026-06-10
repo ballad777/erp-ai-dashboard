@@ -1,6 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import {
+  useWorkspacePanelState,
+  workspaceSourceKey
+} from "@/components/WorkspaceProvider";
 import {
   generateMergedReport,
   generateReport,
@@ -36,14 +40,40 @@ export function AgentReportPanel({
     recommendedTargets.find((column) => dataset.columns.includes(column)) ??
     dataset.columns[dataset.columns.length - 1] ??
     "";
-  const [targetColumn, setTargetColumn] = useState(defaultTarget);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("auto");
-  const [automlMode, setAutomlMode] = useState<AutoMLMode>("quick");
-  const [workflow, setWorkflow] = useState<AgentWorkflow | null>(null);
-  const [report, setReport] = useState<GeneratedReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const sourceKey = workspaceSourceKey(file, files, isMerged);
+  const [targetColumn, setTargetColumn] = useWorkspacePanelState(
+    `${sourceKey}:agent:target`,
+    defaultTarget
+  );
+  const [analysisMode, setAnalysisMode] = useWorkspacePanelState<AnalysisMode>(
+    `${sourceKey}:agent:analysis-mode`,
+    "auto"
+  );
+  const [automlMode, setAutomlMode] = useWorkspacePanelState<AutoMLMode>(
+    `${sourceKey}:agent:automl`,
+    "quick"
+  );
+  const [workflow, setWorkflow] =
+    useWorkspacePanelState<AgentWorkflow | null>(
+      `${sourceKey}:agent:workflow`,
+      null
+    );
+  const [report, setReport] = useWorkspacePanelState<GeneratedReport | null>(
+    `${sourceKey}:agent:report`,
+    null
+  );
+  const [error, setError] = useWorkspacePanelState<string | null>(
+    `${sourceKey}:agent:error`,
+    null
+  );
+  const [isRunning, setIsRunning] = useWorkspacePanelState(
+    `${sourceKey}:agent:running`,
+    false
+  );
+  const [isGeneratingReport, setIsGeneratingReport] = useWorkspacePanelState(
+    `${sourceKey}:agent:report-loading`,
+    false
+  );
 
   const sourceLabel = useMemo(
     () => (isMerged ? `${files.length} 個檔案合併` : "單一檔案"),
