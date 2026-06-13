@@ -1,10 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronDown,
+  CloudUpload,
+  FileSpreadsheet,
+  Plus,
+  Trash2,
+  X
+} from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AgentReportPanel } from "@/components/AgentReportPanel";
 import { AnalysisResult } from "@/components/AnalysisResult";
 import { FinancialAnalysisPanel } from "@/components/FinancialAnalysisPanel";
 import { ModelAnalysisPanel } from "@/components/ModelAnalysisPanel";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import {
   useWorkspace,
   type DatasetUploadState
@@ -260,9 +273,11 @@ export function UploadPanel() {
 
   return (
     <>
-      {notice ? (
-        <WorkspaceToast notice={notice} onClose={() => setNotice(null)} />
-      ) : null}
+      <AnimatePresence initial={false}>
+        {notice ? (
+          <WorkspaceToast notice={notice} onClose={() => setNotice(null)} />
+        ) : null}
+      </AnimatePresence>
       <div className="workbench-layout">
       <WorkbenchSidebar
         completedCount={completedCount}
@@ -285,13 +300,14 @@ export function UploadPanel() {
           </div>
           <div className="workbench-topbar-actions">
             <StatusBadge status={workspaceState} />
-            <button
+            <Button
               type="button"
               onClick={() => inputRef.current?.click()}
-              className="primary-action glow-button"
+              variant="premium"
             >
+              <Plus aria-hidden="true" />
               選擇檔案
-            </button>
+            </Button>
           </div>
         </section>
 
@@ -309,21 +325,23 @@ export function UploadPanel() {
               <p>可一次選多個檔案，也能分批加入。相同檔案會自動避免重複加入。</p>
             </div>
             <div className="stage-actions">
-              <button
+              <Button
                 type="button"
                 onClick={clearUploads}
                 disabled={isLoading || uploads.length === 0}
-                className="quiet-button"
+                variant="ghost"
               >
+                <Trash2 aria-hidden="true" />
                 清空
-              </button>
-              <button
+              </Button>
+              <Button
                 type="submit"
                 disabled={isLoading || uploads.length === 0}
-                className="primary-action glow-button"
+                variant="premium"
               >
-                {isLoading ? "讀取中..." : "讀取全部"}
-              </button>
+                {isLoading ? <Spinner /> : <FileSpreadsheet aria-hidden="true" />}
+                {isLoading ? "讀取中" : "讀取全部"}
+              </Button>
             </div>
           </div>
 
@@ -340,7 +358,7 @@ export function UploadPanel() {
               onChange={handleFileChange}
             />
             <div className="dropzone-icon">
-              <UploadIcon />
+              <CloudUpload aria-hidden="true" />
             </div>
             <div>
               <h3>
@@ -350,16 +368,18 @@ export function UploadPanel() {
               </h3>
               <p>支援 CSV、XLSX、XLS。讀取後會顯示每份資料的欄位、缺失值與數值摘要。</p>
             </div>
-            <button
+            <Button
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
                 inputRef.current?.click();
               }}
-              className="dropzone-button"
+              variant="outline"
+              size="sm"
             >
+              <Plus aria-hidden="true" />
               加入檔案
-            </button>
+            </Button>
           </div>
 
           {uploads.length > 0 ? (
@@ -376,7 +396,9 @@ export function UploadPanel() {
               {uploads.map((upload) => (
                 <div key={upload.id} className="file-row">
                   <div className="file-row-main">
-                    <span className="file-icon">CSV</span>
+                    <span className="file-icon">
+                      <FileSpreadsheet aria-hidden="true" />
+                    </span>
                     <div>
                       <h3>{upload.file.name}</h3>
                       <p>{(upload.file.size / 1024 / 1024).toFixed(3)} MB</p>
@@ -384,22 +406,25 @@ export function UploadPanel() {
                   </div>
                   <div className="file-row-actions">
                     <FileStateLabel upload={upload} />
-                    <button
+                    <Button
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
                         removeUpload(upload.id);
                       }}
                       disabled={isLoading}
-                      className="quiet-button is-small"
+                      variant="ghost"
+                      size="sm"
                     >
                       移除
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ))}
             </div>
           ) : null}
+
+          {isLoading ? <AnalysisLoadingSkeleton /> : null}
 
           {error ? (
             <div className="mt-6 rounded-md border border-red-200 bg-red-50 px-5 py-4 text-base font-medium text-red-700">
@@ -521,20 +546,27 @@ function WorkspaceToast({
   notice: WorkspaceNotice;
   onClose: () => void;
 }) {
+  const reducedMotion = useReducedMotion();
+
   return (
-    <div className={`workspace-toast is-${notice.tone}`} role="status" aria-live="polite">
+    <motion.div
+      className={`workspace-toast is-${notice.tone}`}
+      role="status"
+      aria-live="polite"
+      initial={reducedMotion ? false : { opacity: 0, transform: "translate3d(0, -10px, 0)" }}
+      animate={{ opacity: 1, transform: "translate3d(0, 0, 0)" }}
+      exit={reducedMotion ? { opacity: 0 } : { opacity: 0, transform: "translate3d(0, -6px, 0)" }}
+      transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.2, 0.8, 0.2, 1] }}
+    >
       <span className="workspace-toast-dot" />
       <div>
         <strong>{notice.title}</strong>
         <p>{notice.detail}</p>
       </div>
       <button type="button" onClick={onClose} aria-label="關閉通知">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="m7 7 10 10" />
-          <path d="M17 7 7 17" />
-        </svg>
+        <X aria-hidden="true" />
       </button>
-    </div>
+    </motion.div>
   );
 }
 
@@ -631,24 +663,11 @@ function AnalysisProgressRail({ steps }: { steps: ProgressStep[] }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  return <span className="status-badge">{status}</span>;
+  return <Badge variant="outline" className="status-badge">{status}</Badge>;
 }
 
 function ChevronIcon() {
-  return (
-    <svg
-      className="disclosure-chevron"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m8 10 4 4 4-4" />
-    </svg>
-  );
+  return <ChevronDown className="disclosure-chevron" aria-hidden="true" />;
 }
 
 function FileStateLabel({ upload }: { upload: DatasetUploadState }) {
@@ -697,12 +716,19 @@ function UploadMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function UploadIcon() {
+function AnalysisLoadingSkeleton() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 16V7" />
-      <path d="m8 11 4-4 4 4" />
-      <path d="M7 18.5H6.5a4.5 4.5 0 0 1-.4-8.98A6 6 0 0 1 17.7 8.4 4.75 4.75 0 0 1 18 18.5h-.8" />
-    </svg>
+    <div className="analysis-loading-skeleton" aria-label="後端正在讀取並分析資料">
+      <div className="analysis-loading-heading">
+        <Spinner />
+        <span>後端正在讀取並建立資料摘要</span>
+      </div>
+      <div className="analysis-loading-grid">
+        <Skeleton className="h-16" />
+        <Skeleton className="h-16" />
+        <Skeleton className="h-16" />
+      </div>
+      <Skeleton className="h-2.5 w-3/5" />
+    </div>
   );
 }

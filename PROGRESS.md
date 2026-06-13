@@ -1912,3 +1912,144 @@ http://127.0.0.1:3000
 
 - 瀏覽器基於安全限制，重新整理或關閉分頁後不能自動重新取得使用者的本機 `File`；目前保留範圍是同一瀏覽器分頁中的頁面往返。
 - Browser 自動化工具不能操作 macOS 原生檔案選擇器，因此本輪無法自動替使用者選取本機 sample dataset；檔案選擇後的狀態結構已通過 TypeScript 與 production build 驗證。
+
+## 2026-06-13：高級介面層次、微互動與動態背景
+
+### 已完成檔案
+
+- `frontend/components.json`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `frontend/tailwind.config.ts`
+- `frontend/src/app/globals.css`
+- `frontend/src/app/page.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/MotionPrimitives.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/ui/badge.tsx`
+- `frontend/src/components/ui/button.tsx`
+- `frontend/src/components/ui/skeleton.tsx`
+- `frontend/src/components/ui/spinner.tsx`
+- `frontend/src/lib/utils.ts`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 保留現有首頁、工作台與分析流程，不重新設計資訊架構。
+- 建立統一介面 tokens：
+  - 語意背景、文字、邊框、品牌、錯誤與狀態色。
+  - 低、中、高表面陰影、控制項陰影與主要操作陰影。
+  - 統一控制項與面板圓角，以及快速與大型轉場節奏。
+- 加入 shadcn/ui primitives：
+  - Button、Badge、Skeleton、Spinner。
+  - 主要按鈕具備 hover、press、disabled、loading 與 focus-visible 狀態。
+  - 圖示統一改用 Lucide，移除首頁手寫 SVG 圖示。
+- 建立可重用 Motion 元件：
+  - `AmbientCanvas`：24 秒與 29 秒週期的低透明度背景光場。
+  - `RouteStage`：可中斷的頁面淡入與小幅位移轉場。
+  - `ScrollReveal`：大型內容區塊一次性進場。
+  - `PointerSurface`：只作用於產品預覽的低強度游標感應光暈。
+- 強化表面層級：
+  - 導覽列保留少量半透明材質。
+  - 資料與分析面板改用較實體、可讀性更高的表面。
+  - 使用細邊框、頂部高光、低飽和色彩與多層陰影區分前景、中景與背景。
+- 強化工作台操作回饋：
+  - 真實 API 讀取期間顯示 spinner 與 skeleton。
+  - 加入檔案、重複、完成、部分失敗、移除與清空通知改為可中斷進出動畫。
+  - 移除拖放區巢狀按鈕語意，鍵盤使用者可直接聚焦「選擇檔案」與「加入檔案」。
+- 響應式與降級：
+  - 1440px、1280px、768px、390px 均無水平溢位。
+  - 手機隱藏桌機導覽與工作台側欄，主要操作自動滿寬。
+  - 支援系統深色模式、`prefers-reduced-motion` 與觸控裝置低動態模式。
+  - 背景持續動畫只使用 transform 與 opacity；手機停用游標光暈與預覽浮動。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm install
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+網站：
+
+```text
+http://127.0.0.1:3000
+```
+
+### 如何測試
+
+前端：
+
+```bash
+cd frontend
+npm run typecheck
+npm run build
+```
+
+後端：
+
+```bash
+cd backend
+./.venv/bin/pytest -q
+```
+
+真實 API：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/datasets/analyze-multiple \
+  -F "files=@sample_datasets/housing_sample.csv" \
+  -F "files=@sample_datasets/stock_prices_sample.csv"
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/models/analyze \
+  -F "file=@sample_datasets/housing_sample.csv" \
+  -F "target_column=price_usd" \
+  -F "analysis_mode=auto" \
+  -F "chart_types=auto" \
+  -F "model_selection_mode=auto" \
+  -F "selected_models=auto"
+```
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build`：production build 通過。
+- `./.venv/bin/pytest -q`：16 passed。
+- 多檔 API：
+  - `housing_sample.csv` 與 `stock_prices_sample.csv` 均成功讀取。
+  - 真實合併結果為 24 列、15 欄、2 個來源檔案。
+- 自動模型 API：
+  - 自動判斷為回歸問題。
+  - 依資料內容推薦 Ridge、Lasso、Elastic Net、Random Forest、Gradient Boosting、XGBoost、KNN。
+  - 真實執行 7 個模型並生成模型比較、特徵重要性、預測對實際與殘差圖。
+- Browser：
+  - 首頁與 `/upload` 正常渲染，無 Next.js 錯誤覆蓋。
+  - console error / warn：空。
+  - 1440px、1280px、768px、390px 的 `scrollWidth` 均等於 `clientWidth`。
+  - 首頁導覽與自動判斷下拉互動正常。
+  - 「選擇檔案」可取得鍵盤 `focus-visible`。
+
+### 下一階段要做什麼
+
+- 公開環境以真實手機與 Safari、Chrome 各執行一次完整上傳、模型、金融、報告與程式碼預覽流程。
+- 視正式部署效能資料調整背景光場透明度與低效能裝置門檻。
+- 持續統一模型、金融與報告結果面板的狀態顏色與長內容閱讀密度。
+
+### Known Issues
+
+- Browser 自動化工具不能操作 macOS 原生檔案選擇器，因此前端選檔後的完整流程需人工點選本機檔案；本輪已用同一批 sample datasets 直接呼叫真實 FastAPI，驗證多檔合併與自動模型分析。
+- Browser 本輪無法模擬作業系統深色偏好；深色 tokens 與 media query 已通過 production build，仍建議在正式 Safari 與 Chrome 各做一次人工視覺驗收。
+- 開發模式左下角會出現 Next.js Dev Tools 按鈕；production build 不會顯示。

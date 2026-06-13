@@ -6,7 +6,7 @@
 
 ## 技術架構
 
-- 前端：Next.js、React、Tailwind CSS
+- 前端：Next.js、React、TypeScript、Tailwind CSS、shadcn/ui、Motion
 - 後端：FastAPI
 - 資料分析：pandas、numpy
 - 模型訓練：scikit-learn、XGBoost、LightGBM
@@ -43,7 +43,10 @@
 │   ├── src/
 │   │   ├── app/
 │   │   ├── components/
+│   │   │   ├── ui/
+│   │   │   └── MotionPrimitives.tsx
 │   │   └── lib/
+│   ├── components.json
 │   ├── package.json
 │   └── tailwind.config.ts
 ├── sample_datasets/
@@ -104,6 +107,14 @@ npm run dev
 
 ```text
 http://localhost:3000
+```
+
+前端品質檢查：
+
+```bash
+cd frontend
+npm run typecheck
+npm run build
 ```
 
 前端預設呼叫同網域 API：
@@ -182,6 +193,17 @@ https://smart-finance-analysis.onrender.com
 ```text
 DEPLOYMENT.md
 ```
+
+## 介面系統與互動品質
+
+- 保留首頁、上傳工作台、分析結果與報告流程的既有資訊架構。
+- 使用 CSS variables 統一色彩、間距、陰影、圓角與 160 至 440ms 動態節奏。
+- 主要操作採用 shadcn/ui primitives，圖示統一使用 Lucide。
+- 背景光場只使用低透明度、低位移的 transform / opacity 動畫，不穿過主要閱讀區。
+- 首頁提供 scroll reveal、低強度游標感應光暈與可中斷頁面轉場。
+- 工作台提供 loading skeleton、spinner、通知進出、成功、警告與錯誤回饋。
+- 支援 `prefers-reduced-motion`、鍵盤 `focus-visible`、觸控裝置與系統深色模式。
+- 桌機、平板、手機皆使用流動式版面；側欄會在小尺寸收合，主要操作會自動滿寬。
 
 ## 已完成功能
 
