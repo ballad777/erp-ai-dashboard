@@ -18,6 +18,7 @@ venv/
 .env.local
 frontend/.env.local
 backend/.env
+.superpowers/
 generated_outputs/**
 !generated_outputs/
 !generated_outputs/README.md
