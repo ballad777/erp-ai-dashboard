@@ -1,0 +1,23 @@
+:root {
+  --product-background: #eef3f5;
+  --product-surface: #ffffff;
+  --product-surface-elevated: #f7f9fa;
+  --product-text-primary: #122033;
+  --product-text-secondary: #5f6f82;
+  --product-border: #d7e1e8;
+  --product-accent-primary: #39777e;
+  --product-accent-secondary: #315f8e;
+  --product-success: #2c806c;
+  --product-warning: #94651f;
+  --product-danger: #ad5158;
+  --product-chart-1: #39777e;
+  --product-chart-2: #315f8e;
+  --product-chart-3: #8b6f47;
+  --product-chart-4: #7b668f;
+  --product-chart-5: #3f806a;
+  --product-chart-6: #b05d62;
+}
+
+html[data-product-appearance="dark"] {
+  color-scheme: dark;
+}
