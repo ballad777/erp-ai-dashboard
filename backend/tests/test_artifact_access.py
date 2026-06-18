@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import unquote
 
 import pytest
 from fastapi import HTTPException
@@ -23,7 +24,7 @@ def _artifact_access_module() -> ModuleType:
 def _token_from_url(url: str) -> str:
     prefix = "/api/artifacts/"
     assert url.startswith(prefix)
-    return url.removeprefix(prefix)
+    return unquote(url.removeprefix(prefix))
 
 
 def _encode(value: bytes) -> str:
@@ -67,6 +68,7 @@ def test_artifact_token_resolves_file_and_supports_epoch_zero(
     )
 
     assert resolved == artifact.resolve()
+    assert "%2E" in url
 
 
 def test_artifact_token_rejects_tampering(

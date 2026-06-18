@@ -9,6 +9,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any, NoReturn
+from urllib.parse import unquote
 
 from fastapi import HTTPException
 
@@ -17,6 +18,8 @@ from app.services.run_governance import current_artifact_context
 
 ARTIFACT_TTL_SECONDS = 4 * 60 * 60
 _PROCESS_LOCAL_SECRET = secrets.token_bytes(32)
+_TOKEN_SEPARATOR = "."
+_ROUTE_SAFE_SEPARATOR = "%2E"
 
 
 def create_artifact_url(
@@ -65,8 +68,9 @@ def create_artifact_url(
         payload_bytes,
         hashlib.sha256,
     ).digest()
-    token = f"{_encode(payload_bytes)}.{_encode(signature)}"
-    return f"/api/artifacts/{token}"
+    token = f"{_encode(payload_bytes)}{_TOKEN_SEPARATOR}{_encode(signature)}"
+    route_safe_token = token.replace(_TOKEN_SEPARATOR, _ROUTE_SAFE_SEPARATOR)
+    return f"/api/artifacts/{route_safe_token}"
 
 
 def resolve_artifact_token(
@@ -75,8 +79,9 @@ def resolve_artifact_token(
     root: str | Path,
     now: float | None = None,
 ) -> Path:
+    token = unquote(token)
     try:
-        payload_part, signature_part = token.split(".", maxsplit=1)
+        payload_part, signature_part = token.split(_TOKEN_SEPARATOR, maxsplit=1)
         payload_bytes = _decode(payload_part)
         supplied_signature = _decode(signature_part)
     except (TypeError, ValueError):
