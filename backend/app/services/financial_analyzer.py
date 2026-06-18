@@ -21,10 +21,19 @@ import pandas as pd
 from fastapi import HTTPException, UploadFile
 from sklearn.linear_model import LinearRegression
 
-from app.services.dataset_analyzer import merge_dataframes, read_uploaded_dataframe
+from app.services.artifact_access import create_artifact_url
+from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes, read_uploaded_dataframe
+from app.services.insight_narrative import build_financial_brief
+from app.services.analysis_progress import (
+    CancelCheck,
+    ProgressCallback,
+    emit_progress,
+    ensure_not_cancelled,
+)
 
-CHART_DIR = REPO_ROOT / "generated_outputs" / "charts"
-DATA_DIR = REPO_ROOT / "generated_outputs" / "data"
+GENERATED_OUTPUTS_DIR = REPO_ROOT / "generated_outputs"
+CHART_DIR = GENERATED_OUTPUTS_DIR / "charts"
+DATA_DIR = GENERATED_OUTPUTS_DIR / "data"
 DATE_NAME_HINTS = ("date", "datetime", "timestamp", "time", "day", "日期", "時間", "交易日")
 PRICE_NAME_HINTS = (
     "close",
@@ -42,10 +51,10 @@ PRICE_NAME_HINTS = (
 )
 
 FINANCIAL_CHART_TITLES = {
-    "price_moving_average": "價格與移動平均",
+    "price_moving_average": "價格/指數/數值與移動平均",
     "return_volatility": "報酬率與波動率",
     "rsi_macd": "RSI 與 MACD",
-    "time_series_forecast": "時間序列預測",
+    "time_series_forecast": "時間序列基準情境估計",
 }
 
 plt.rcParams["font.sans-serif"] = [
@@ -61,13 +70,19 @@ async def analyze_uploaded_financial_dataset(
     file: UploadFile,
     date_column: str | None = None,
     price_column: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    emit_progress(progress_callback, "reading_data", "正在讀取金融資料。")
+    ensure_not_cancelled(should_cancel)
     df, file_name = await read_uploaded_dataframe(file)
     return run_financial_analysis(
         df=df,
         file_name=file_name,
         date_column=date_column,
         price_column=price_column,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
 
 
@@ -75,6 +90,8 @@ async def analyze_uploaded_merged_financial_dataset(
     files: list[UploadFile],
     date_column: str | None = None,
     price_column: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
     if len(files) < 2:
         raise HTTPException(status_code=400, detail="合併金融分析至少需要 2 個檔案。")
@@ -82,7 +99,9 @@ async def analyze_uploaded_merged_financial_dataset(
     loaded_datasets: list[tuple[str, pd.DataFrame]] = []
     skipped_files: list[str] = []
 
-    for file in files:
+    for index, file in enumerate(files):
+        ensure_not_cancelled(should_cancel)
+        emit_progress(progress_callback, "reading_data", "正在讀取合併金融資料。", index, len(files))
         file_name = file.filename or "未命名檔案"
         try:
             df, parsed_file_name = await read_uploaded_dataframe(file)
@@ -102,6 +121,8 @@ async def analyze_uploaded_merged_financial_dataset(
         file_name="merged_dataset.csv",
         date_column=date_column,
         price_column=price_column,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
     result["notes"] = [
         *merge_metadata["merge_notes"],
@@ -116,7 +137,11 @@ def run_financial_analysis(
     file_name: str,
     date_column: str | None = None,
     price_column: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "detecting_columns", "正在偵測日期與價格/指數/數值欄位。")
     notes: list[str] = []
     resolved_date_column = _detect_date_column(df, date_column)
     resolved_price_column = _detect_price_column(df, price_column, resolved_date_column)
@@ -133,7 +158,7 @@ def run_financial_analysis(
     if len(working_df) < 6:
         raise HTTPException(
             status_code=400,
-            detail="金融分析至少需要 6 筆有效日期與價格資料。",
+            detail="金融分析至少需要 6 筆有效日期與價格/指數/數值資料。",
         )
 
     duplicate_count = int(working_df["date"].duplicated().sum())
@@ -153,9 +178,15 @@ def run_financial_analysis(
             detail="依日期彙整後有效資料不足，金融分析至少需要 6 個日期點。",
         )
 
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "calculating_indicators", "正在計算報酬、風險與技術指標。")
     indicator_df = _add_financial_indicators(working_df)
     indicator_path = _save_indicator_dataset(indicator_df)
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "forecasting", "正在建立時間序列預測。")
     forecast_points = _forecast_prices(indicator_df)
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "generating_charts", "正在產生金融圖表。")
     charts = _create_financial_charts(indicator_df, forecast_points)
     metrics = _latest_metrics(indicator_df)
     trend_label = _trend_label(metrics)
@@ -167,10 +198,10 @@ def run_financial_analysis(
         row_count=len(indicator_df),
     )
 
-    notes.append(f"已自動使用日期欄位「{resolved_date_column}」與價格欄位「{resolved_price_column}」。")
+    notes.append(f"已自動使用日期欄位「{resolved_date_column}」與價格/指數/數值欄位「{resolved_price_column}」。")
     notes.append("MA 使用 5 期與 10 期；波動率使用 5 期滾動標準差；RSI 依資料長度自動調整週期。")
 
-    return {
+    result = {
         "file_name": file_name,
         "date_column": resolved_date_column,
         "price_column": resolved_price_column,
@@ -188,9 +219,20 @@ def run_financial_analysis(
         "forecast_points": forecast_points,
         "charts": charts,
         "indicator_path": str(indicator_path.relative_to(REPO_ROOT)),
-        "indicator_url": f"/generated_outputs/data/{indicator_path.name}",
+        "indicator_url": create_artifact_url(
+            indicator_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
         "notes": notes,
     }
+    dataset_summary = analyze_dataframe(df, file_name=file_name)
+    result.update(
+        build_financial_brief(
+            financial_analysis=result,
+            dataset_summary=dataset_summary,
+        )
+    )
+    return result
 
 
 def _detect_date_column(df: pd.DataFrame, requested_column: str | None) -> str:
@@ -239,10 +281,10 @@ def _detect_price_column(
 ) -> str:
     if requested_column:
         if requested_column not in df.columns:
-            raise HTTPException(status_code=400, detail="指定的價格欄位不存在。")
+            raise HTTPException(status_code=400, detail="指定的價格/指數/數值欄位不存在。")
         prices = pd.to_numeric(df[requested_column], errors="coerce")
         if prices.notna().sum() < 6 or float(prices.notna().mean()) < 0.5:
-            raise HTTPException(status_code=400, detail="指定的價格欄位無法有效轉換為數值。")
+            raise HTTPException(status_code=400, detail="指定的價格/指數/數值欄位無法有效轉換為數值。")
         return requested_column
 
     scored_columns: list[tuple[float, str]] = []
@@ -270,7 +312,7 @@ def _detect_price_column(
     if not scored_columns:
         raise HTTPException(
             status_code=400,
-            detail="無法自動偵測價格欄位，請手動指定可轉換為數值的價格欄位。",
+            detail="無法自動偵測價格/指數/數值欄位，請手動指定可轉換為數值的欄位。",
         )
 
     return max(scored_columns, key=lambda item: item[0])[1]
@@ -351,19 +393,22 @@ def _financial_chart_payload(chart_type: str, chart_path: Path) -> dict[str, str
         "chart_type": chart_type,
         "title": FINANCIAL_CHART_TITLES[chart_type],
         "chart_path": str(chart_path.relative_to(REPO_ROOT)),
-        "chart_url": f"/generated_outputs/charts/{chart_path.name}",
+        "chart_url": create_artifact_url(
+            chart_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
     }
 
 
 def _create_price_ma_chart(indicator_df: pd.DataFrame) -> Path:
     chart_path = CHART_DIR / f"financial_price_ma_{uuid4().hex}.png"
     fig, ax = plt.subplots(figsize=(12, 6.6))
-    ax.plot(indicator_df["date"], indicator_df["price"], label="價格", color="#1d4ed8", linewidth=2.5)
+    ax.plot(indicator_df["date"], indicator_df["price"], label="價格/指數/數值", color="#1d4ed8", linewidth=2.5)
     ax.plot(indicator_df["date"], indicator_df["ma_short"], label="MA 短期", color="#0f766e", linewidth=2)
     ax.plot(indicator_df["date"], indicator_df["ma_long"], label="MA 長期", color="#b7791f", linewidth=2)
-    ax.set_title("價格與移動平均", fontsize=18)
+    ax.set_title("價格/指數/數值與移動平均", fontsize=18)
     ax.set_xlabel("日期", fontsize=13)
-    ax.set_ylabel("價格", fontsize=13)
+    ax.set_ylabel("價格/指數/數值", fontsize=13)
     ax.grid(alpha=0.25)
     ax.legend(fontsize=12)
     fig.autofmt_xdate()
@@ -450,21 +495,21 @@ def _create_time_series_forecast_chart(
     chart_path = CHART_DIR / f"financial_forecast_{uuid4().hex}.png"
     forecast_df = pd.DataFrame(forecast_points)
     fig, ax = plt.subplots(figsize=(12, 6.6))
-    ax.plot(indicator_df["date"], indicator_df["price"], label="歷史價格", color="#1d4ed8", linewidth=2.5)
+    ax.plot(indicator_df["date"], indicator_df["price"], label="歷史價格/指數/數值", color="#1d4ed8", linewidth=2.5)
     if not forecast_df.empty:
         forecast_dates = pd.to_datetime(forecast_df["date"], errors="coerce")
         ax.plot(
             forecast_dates,
             forecast_df["predicted_price"],
-            label="線性時間序列預測",
+            label="線性基準情境估計",
             color="#b7791f",
             linewidth=2.2,
             linestyle="--",
             marker="o",
         )
-    ax.set_title("時間序列預測", fontsize=18)
+    ax.set_title("時間序列基準情境估計", fontsize=18)
     ax.set_xlabel("日期", fontsize=13)
-    ax.set_ylabel("價格", fontsize=13)
+    ax.set_ylabel("價格/指數/數值", fontsize=13)
     ax.grid(alpha=0.25)
     ax.legend(fontsize=12)
     fig.autofmt_xdate()
@@ -580,8 +625,8 @@ def _build_summary(
     var_99 = _format_percent(metrics["var_99"])
 
     return [
-        f"已使用「{date_column}」作為日期欄位、「{price_column}」作為價格欄位，共分析 {row_count} 個有效日期點。",
-        f"最新價格為 {_format_number(metrics['latest_price'])}，最新報酬率 {latest_return}，滾動波動率 {latest_volatility}。",
+        f"已使用「{date_column}」作為日期欄位、「{price_column}」作為價格/指數/數值欄位，共分析 {row_count} 個有效日期點。",
+        f"最新價格/指數/數值為 {_format_number(metrics['latest_price'])}，最新報酬率 {latest_return}，滾動波動率 {latest_volatility}。",
         f"RSI 為 {latest_rsi}，MACD 為 {latest_macd}，目前訊號判斷為「{trend_label}」。",
         f"歷史法 VaR 估計：95% 信心水準約 {var_95}，99% 信心水準約 {var_99}。",
     ]

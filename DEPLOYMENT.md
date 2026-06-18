@@ -1,6 +1,8 @@
-# 正式部署指南
+# 封閉測試部署指南
 
 本專案需要同時執行 Next.js 前端與 FastAPI / Python 後端，因此不適合只用 GitHub Pages。
+
+> 目前架構不適合公開匿名上傳或敏感資料。部署用途限私人展示、封閉測試與非敏感樣本資料；正式多租戶 SaaS 仍需完成真正登入、PostgreSQL repository、Redis Worker、retention scheduler 與完整權限稽核。
 
 GitHub Pages 只能部署靜態網頁，無法執行：
 
@@ -10,7 +12,7 @@ GitHub Pages 只能部署靜態網頁，無法執行：
 - 模型訓練
 - 圖表、報告、程式碼與模型檔輸出
 
-建議正式部署方式：GitHub + Render Docker Web Service。
+封閉測試部署方式：GitHub + Render Docker Web Service。
 
 ## 部署架構
 
@@ -20,7 +22,7 @@ GitHub Pages 只能部署靜態網頁，無法執行：
 Render 公開網址
   ↓
 Next.js 前端
-  ↓ 透過 /api/* 與 /generated_outputs/* 代理
+  ↓ 透過 /api/* 與 /api/artifacts/{token} 代理
 FastAPI 後端
   ↓
 Python 分析、模型訓練、圖表與報告輸出
@@ -30,14 +32,14 @@ Python 分析、模型訓練、圖表與報告輸出
 
 ## 已提供的部署檔案
 
-- `Dockerfile`：建立正式容器，包含前端 build、後端 Python 環境與模型套件。
+- `Dockerfile`：建立封閉測試容器，包含前端 build、後端 Python 環境與模型套件。
 - `.dockerignore`：排除本機暫存、venv、node_modules 與大量 generated output。
 - `scripts/start-production.sh`：啟動 FastAPI，再啟動 Next.js。
 - `render.yaml`：Render Blueprint 設定。
 
 ## GitHub 上傳步驟
 
-1. 在 GitHub 建立一個新的 public repository。
+1. 在 GitHub 建立新的 private repository；若因方案限制必須公開原始碼，請先確認沒有金鑰、敏感資料或測試產物。
 2. 將本機專案推上 GitHub：
 
 ```bash
@@ -54,7 +56,7 @@ git push -u origin main
 5. 連接剛剛的 GitHub repository。
 6. Render 會讀取根目錄的 `render.yaml`。
 7. 建立 `smart-finance-analysis` web service。
-8. 部署完成後，Render 會給一個固定公開網址，例如：
+8. 部署完成後，Render 會給一個固定網址，例如：
 
 ```text
 https://smart-finance-analysis.onrender.com
@@ -62,17 +64,34 @@ https://smart-finance-analysis.onrender.com
 
 ## Render 設定
 
-目前 `render.yaml` 使用 free plan，方便先公開測試。
+目前 `render.yaml` 使用 free plan，僅供私人展示與封閉測試。
 
 注意：
 
 - Free plan 可能會有冷啟動。
-- 模型分析較耗資源，若多人同時測試或資料較大，建議升級到 Starter 或更高方案。
+- 模型分析較耗資源，封閉測試人數或資料量增加時，可能需要升級到 Starter 或更高方案。
 - Free plan 的輸出檔案是暫存型；服務重啟後，`generated_outputs/` 內的新圖表與報告可能消失。
+- 產物下載使用短效 capability URL；若未設定穩定的 `ARTIFACT_SIGNING_SECRET`，服務重啟後舊 token 會失效。
+- 目前 API 有基礎 rate limit middleware，預設每 IP + path 每分鐘 180 次；這不是正式 WAF 或濫用治理。
+- 本機預設使用 `.local/finai.sqlite3` 保存 demo project、dataset、run、artifact、job 與 audit log。Render free plan 的檔案系統可能重啟遺失，不可視為正式資料庫。
+- `backend/database/postgres_schema.sql` 已提供正式 PostgreSQL schema，但目前執行 repository 仍是 SQLite fallback；公開 SaaS 前必須接上 PostgreSQL driver/repository。
+- 固定網址不代表服務已具備公開匿名上傳所需的身份授權、租戶隔離、資料保留政策或完整濫用防護。
 
 ## 環境變數
 
-基本部署不需要額外環境變數。
+封閉測試的基本啟動不需要額外環境變數。
+
+建議設定穩定的 artifact token secret：
+
+```bash
+ARTIFACT_SIGNING_SECRET=請換成至少 32 字元的隨機字串
+```
+
+可調整 API rate limit：
+
+```bash
+API_RATE_LIMIT_PER_MINUTE=180
+```
 
 若要啟用外部 LLM 摘要，可在 Render 加入：
 
@@ -84,7 +103,7 @@ OPENAI_API_KEY=你的金鑰
 
 ## 部署後驗收
 
-部署完成後，請測試：
+封閉測試部署完成後，請測試：
 
 ```text
 https://你的-render-url/health

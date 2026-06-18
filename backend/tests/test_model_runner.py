@@ -36,6 +36,12 @@ def test_run_model_analysis_auto_recommends_regression_models() -> None:
     assert "gradient_boosting_regressor" in result["selected_model_keys"]
     assert result["recommended_models"]
     assert result["available_models"]
+    assert result["plain_summary"]["headline"]
+    assert result["confidence"]["level"] in {"high", "medium", "low"}
+    assert result["evidence"]
+    assert any(term["term"] == "RMSE" for term in result["terms"])
+    assert result["model_guidance"]["recommended_models"]
+    assert result["research_details"]["parameters"]["train_test_split"] == "75/25"
     assert Path(result["chart_path"]).suffix == ".png"
     assert (REPO_ROOT / Path(result["chart_path"])).exists()
 
@@ -110,7 +116,8 @@ def test_run_model_analysis_generates_requested_charts() -> None:
         "random_forest",
         "gradient_boosting_regressor",
     ]
-    assert len(result["model_results"]) == 3
+    assert len(result["model_results"]) == 4
+    assert result["model_results"][0]["model_key"] == "baseline_regressor"
     assert result["selected_chart_types"] == [
         "model_comparison",
         "feature_importance",
@@ -118,6 +125,8 @@ def test_run_model_analysis_generates_requested_charts() -> None:
         "residual_plot",
     ]
     assert len(result["charts"]) == 4
+    assert len(result["chart_stories"]) == 4
+    assert "不能" in result["chart_stories"][0]["what_it_cannot_prove"]
     for chart in result["charts"]:
         assert Path(chart["chart_path"]).suffix == ".png"
         assert (REPO_ROOT / Path(chart["chart_path"])).exists()
@@ -165,7 +174,34 @@ def test_run_model_analysis_accepts_manual_alias_for_custom_selection() -> None:
 
     assert result["model_selection_mode"] == "custom"
     assert result["selected_model_keys"] == ["ridge"]
-    assert len(result["model_results"]) == 1
+    assert len(result["model_results"]) == 2
+    assert result["model_results"][0]["model_key"] == "baseline_regressor"
+
+
+def test_run_model_analysis_handles_mixed_type_categorical_features() -> None:
+    df = pd.DataFrame(
+        {
+            "mixed_category": ["north", 2, "south", 4, "north", 6, "south", 8],
+            "feature": [1, 2, 3, 4, 5, 6, 7, 8],
+            "target": [10, 12, 18, 21, 24, 30, 35, 39],
+        }
+    )
+
+    result = run_model_analysis(
+        df,
+        file_name="mixed.csv",
+        target_column="target",
+        analysis_mode="regression",
+        model_selection_mode="custom",
+        selected_models="ridge",
+        chart_types="model_comparison",
+    )
+
+    assert result["problem_type"] == "regression"
+    assert [item["model_key"] for item in result["model_results"]] == [
+        "baseline_regressor",
+        "ridge",
+    ]
 
 
 def test_run_model_analysis_rejects_heatmap_chart() -> None:

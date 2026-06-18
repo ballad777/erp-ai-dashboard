@@ -291,3 +291,86 @@ const defaultTheme = findDefaultTheme();
 export function getTheme(id: string | null | undefined): ProductTheme {
   return themes.find((theme) => theme.id === id) ?? defaultTheme;
 }
+
+export function getThemeRuntimeVariables(
+  themeOrId: ProductTheme | ThemeId,
+): Readonly<Record<string, string>> {
+  const theme =
+    typeof themeOrId === "string" ? getTheme(themeOrId) : themeOrId;
+  const productVariables = {
+    "--product-background": theme.tokens.background,
+    "--product-surface": theme.tokens.surface,
+    "--product-surface-elevated": theme.tokens.surfaceElevated,
+    "--product-text-primary": theme.tokens.textPrimary,
+    "--product-text-secondary": theme.tokens.textSecondary,
+    "--product-border": theme.tokens.border,
+    "--product-accent-primary": theme.tokens.accentPrimary,
+    "--product-accent-secondary": theme.tokens.accentSecondary,
+    "--product-success": theme.tokens.success,
+    "--product-warning": theme.tokens.warning,
+    "--product-danger": theme.tokens.danger,
+  };
+  const chartVariables = Object.fromEntries(
+    theme.chart.map((color, index) => [
+      `--product-chart-${index + 1}`,
+      color,
+    ]),
+  );
+  const primaryForeground =
+    theme.appearance === "dark" ? theme.tokens.background : "#ffffff";
+  const legacyVariables = {
+    "--color-background": hexToRgbChannels(theme.tokens.background),
+    "--color-foreground": hexToRgbChannels(theme.tokens.textPrimary),
+    "--color-card": hexToRgbChannels(theme.tokens.surface),
+    "--color-card-foreground": hexToRgbChannels(theme.tokens.textPrimary),
+    "--color-popover": hexToRgbChannels(theme.tokens.surface),
+    "--color-popover-foreground": hexToRgbChannels(theme.tokens.textPrimary),
+    "--color-primary": hexToRgbChannels(theme.tokens.accentPrimary),
+    "--color-primary-deep": hexToRgbChannels(theme.tokens.accentSecondary),
+    "--color-primary-foreground": hexToRgbChannels(primaryForeground),
+    "--color-secondary": hexToRgbChannels(theme.tokens.surfaceElevated),
+    "--color-secondary-foreground": hexToRgbChannels(
+      theme.tokens.textPrimary,
+    ),
+    "--color-muted": hexToRgbChannels(theme.tokens.surfaceElevated),
+    "--color-muted-foreground": hexToRgbChannels(theme.tokens.textSecondary),
+    "--color-accent": hexToRgbChannels(theme.tokens.surfaceElevated),
+    "--color-accent-foreground": hexToRgbChannels(
+      theme.tokens.accentPrimary,
+    ),
+    "--color-destructive": hexToRgbChannels(theme.tokens.danger),
+    "--color-border": hexToRgbChannels(theme.tokens.border),
+    "--color-input": hexToRgbChannels(theme.tokens.border),
+    "--color-ring": hexToRgbChannels(theme.tokens.accentSecondary),
+    "--accent": theme.tokens.accentPrimary,
+    "--accent-blue": theme.tokens.accentSecondary,
+    "--accent-soft": theme.tokens.surfaceElevated,
+    "--surface": theme.tokens.surface,
+    "--surface-solid": theme.tokens.surface,
+    "--border-soft": theme.tokens.border,
+  };
+
+  return Object.freeze({
+    ...productVariables,
+    ...chartVariables,
+    ...legacyVariables,
+  });
+}
+
+function hexToRgbChannels(hex: string) {
+  const normalized = hex.replace("#", "");
+  const expanded =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((character) => character.repeat(2))
+          .join("")
+      : normalized;
+  const numeric = Number.parseInt(expanded, 16);
+
+  return [
+    (numeric >> 16) & 255,
+    (numeric >> 8) & 255,
+    numeric & 255,
+  ].join(" ");
+}

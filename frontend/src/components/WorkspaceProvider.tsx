@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
   type Dispatch,
@@ -11,6 +12,11 @@ import {
   type SetStateAction
 } from "react";
 import type { DatasetAnalysis, MergedDatasetAnalysis } from "@/lib/api";
+import {
+  clearWorkspaceSnapshot,
+  loadWorkspaceSnapshot,
+  saveWorkspaceSnapshot
+} from "@/lib/workspace-storage";
 
 export type DatasetUploadState = {
   id: string;
@@ -31,6 +37,9 @@ type WorkspaceContextValue = {
   setError: Dispatch<SetStateAction<string | null>>;
   panelStates: Record<string, unknown>;
   setPanelStates: Dispatch<SetStateAction<Record<string, unknown>>>;
+  activeSourceId: string | null;
+  setActiveSourceId: Dispatch<SetStateAction<string | null>>;
+  isHydrated: boolean;
   clearWorkspace: () => void;
 };
 
@@ -42,6 +51,60 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [batchNotes, setBatchNotes] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [panelStates, setPanelStates] = useState<Record<string, unknown>>({});
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadWorkspaceSnapshot()
+      .then((snapshot) => {
+        if (cancelled || !snapshot) return;
+        setUploads(
+          snapshot.uploads.map((upload) => ({
+            ...upload,
+            isLoading: false
+          }))
+        );
+        setMergedResult(snapshot.mergedResult);
+        setBatchNotes(snapshot.batchNotes);
+        setPanelStates(resetInterruptedLoading(snapshot.panelStates));
+        setActiveSourceId(snapshot.activeSourceId);
+      })
+      .catch(() => {
+        // IndexedDB may be unavailable in private browsing; the workspace still works in memory.
+      })
+      .finally(() => {
+        if (!cancelled) setIsHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    const timer = window.setTimeout(() => {
+      void saveWorkspaceSnapshot({
+        version: 1,
+        savedAt: Date.now(),
+        uploads,
+        mergedResult,
+        batchNotes,
+        panelStates: resetInterruptedLoading(panelStates),
+        activeSourceId
+      }).catch(() => {
+        // Storage failure must not block the current analysis session.
+      });
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeSourceId,
+    batchNotes,
+    isHydrated,
+    mergedResult,
+    panelStates,
+    uploads
+  ]);
 
   const clearWorkspace = useCallback(() => {
     setUploads([]);
@@ -49,6 +112,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setBatchNotes([]);
     setError(null);
     setPanelStates({});
+    setActiveSourceId(null);
+    void clearWorkspaceSnapshot().catch(() => {
+      // The in-memory workspace is already cleared.
+    });
   }, []);
 
   return (
@@ -64,6 +131,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setError,
         panelStates,
         setPanelStates,
+        activeSourceId,
+        setActiveSourceId,
+        isHydrated,
         clearWorkspace
       }}
     >
@@ -138,4 +208,13 @@ export function workspaceSourceKey(
 
 function fileIdentity(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function resetInterruptedLoading(panelStates: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(panelStates).map(([key, value]) => [
+      key,
+      key.endsWith(":loading") || key.endsWith(":running") ? false : value
+    ])
+  );
 }

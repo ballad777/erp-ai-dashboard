@@ -1,10 +1,5 @@
-import { AppShell } from "@/components/AppShell";
-import { UploadPanel } from "@/components/UploadPanel";
+import { redirect } from "next/navigation";
 
 export default function UploadPage() {
-  return (
-    <AppShell active="upload">
-      <UploadPanel />
-    </AppShell>
-  );
+  redirect("/app/data");
 }

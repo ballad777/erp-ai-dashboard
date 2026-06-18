@@ -13,7 +13,11 @@ import { cn } from "@/lib/utils";
 
 const ambientEase = [0.45, 0, 0.2, 1] as const;
 
-export function AmbientCanvas() {
+export function AmbientCanvas({
+  variant = "workspace"
+}: {
+  variant?: "marketing" | "workspace";
+}) {
   const reducedMotion = useReducedMotion();
   const pointerX = useMotionValue(-240);
   const pointerY = useMotionValue(-240);
@@ -42,7 +46,7 @@ export function AmbientCanvas() {
   }, [pointerX, pointerY, reducedMotion]);
 
   return (
-    <div className="ambient-canvas" aria-hidden="true">
+    <div className={`ambient-canvas is-${variant}`} aria-hidden="true">
       <motion.div
         className="ambient-field ambient-field-one"
         initial={false}
@@ -96,9 +100,9 @@ export function RouteStage({ children }: { children: React.ReactNode }) {
     <motion.div
       key={pathname}
       className="route-stage"
-      initial={reducedMotion ? false : { opacity: 0, transform: "translate3d(0, 6px, 0)" }}
+      initial={reducedMotion ? false : { opacity: 0, transform: "translate3d(0, 3px, 0)" }}
       animate={{ opacity: 1, transform: "translate3d(0, 0, 0)" }}
-      transition={{ duration: reducedMotion ? 0 : 0.38, ease: ambientEase }}
+      transition={{ duration: reducedMotion ? 0 : 0.18, ease: ambientEase }}
     >
       {children}
     </motion.div>
@@ -171,5 +175,50 @@ export function PointerSurface({
       />
       <div className="pointer-surface-content">{children}</div>
     </div>
+  );
+}
+
+export function SharedPanel({
+  open,
+  layoutId,
+  children
+}: {
+  open: boolean;
+  layoutId: string;
+  children: React.ReactNode;
+}) {
+  const reducedMotion = useReducedMotion();
+
+  if (!open) return null;
+
+  return (
+    <motion.div
+      className="shared-panel-motion"
+      layoutId={reducedMotion ? undefined : layoutId}
+      initial={
+        reducedMotion
+          ? false
+          : {
+              opacity: 0,
+              transform: "translate3d(12px,0,0) scale(.99)"
+            }
+      }
+      animate={{
+        opacity: 1,
+        transform: "translate3d(0,0,0) scale(1)"
+      }}
+      exit={{
+        opacity: 0,
+        transform: reducedMotion
+          ? "none"
+          : "translate3d(8px,0,0) scale(.995)"
+      }}
+      transition={{
+        duration: reducedMotion ? 0 : 0.22,
+        ease: [0.23, 1, 0.32, 1]
+      }}
+    >
+      {children}
+    </motion.div>
   );
 }

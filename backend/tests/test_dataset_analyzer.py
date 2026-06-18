@@ -1,6 +1,16 @@
-import pandas as pd
+import asyncio
+from io import BytesIO
 
-from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes
+import pandas as pd
+from fastapi import UploadFile
+
+from app.services import dataset_analyzer
+from app.services.dataset_analyzer import (
+    analyze_dataframe,
+    analyze_multiple_uploaded_datasets,
+    merge_dataframes,
+    read_uploaded_dataframe,
+)
 
 
 def test_analyze_dataframe_returns_required_summary() -> None:
@@ -23,6 +33,13 @@ def test_analyze_dataframe_returns_required_summary() -> None:
     assert "feature_b" in result["numeric_summary"]
     assert "category" not in result["numeric_summary"]
     assert "feature_b" in result["recommended_target_columns"]
+    assert result["quality_report"]["quality_score"] >= 0
+    assert result["schema_fingerprint"]
+    assert result["plain_summary"]["headline"]
+    assert result["confidence"]["level"] in {"high", "medium", "low"}
+    assert result["evidence"]
+    assert any(term["term"] == "資料完整度" for term in result["terms"])
+    assert result["research_details"]["method"]
 
 
 def test_merge_dataframes_keeps_union_columns_and_source_metadata() -> None:
@@ -55,3 +72,54 @@ def test_merge_dataframes_keeps_union_columns_and_source_metadata() -> None:
     assert metadata["source_row_counts"]["housing_sample.csv"] == 2
     assert metadata["source_row_counts"]["stock_prices_sample.csv"] == 2
     assert metadata["merge_notes"]
+    assert metadata["merge_plan"]["recommended_strategy"] == "separate_analysis"
+    assert "separate_analysis" in {
+        strategy["key"] for strategy in metadata["merge_plan"]["available_strategies"]
+    }
+
+
+def test_read_uploaded_dataframe_detects_semicolon_csv_delimiter() -> None:
+    upload = UploadFile(
+        file=BytesIO("player;score\nA;10\nB;12\n".encode("utf-8")),
+        filename="semicolon_players.csv",
+        size=25,
+    )
+
+    df, file_name = asyncio.run(read_uploaded_dataframe(upload))
+
+    assert file_name == "semicolon_players.csv"
+    assert df.columns.tolist() == ["player", "score"]
+    assert df["score"].tolist() == [10, 12]
+
+
+def test_read_uploaded_dataframe_recovers_from_bad_csv_lines_with_warning() -> None:
+    upload = UploadFile(
+        file=BytesIO(b"player,score\nA,10\nB,12,unexpected\nC,14\n"),
+        filename="ragged_players.csv",
+        size=43,
+    )
+
+    df, _ = asyncio.run(read_uploaded_dataframe(upload))
+
+    assert df["player"].tolist() == ["A", "C"]
+    assert df.attrs["parser_warnings"]
+    assert "格式異常" in df.attrs["parser_warnings"][0]
+
+
+def test_analyze_multiple_datasets_isolates_single_file_profile_errors(monkeypatch) -> None:
+    upload = UploadFile(
+        file=BytesIO(b"player,score\nA,10\n"),
+        filename="profile_error.csv",
+        size=18,
+    )
+
+    def raise_profile_error(_df: pd.DataFrame) -> dict[str, object]:
+        raise RuntimeError("unexpected profiling failure")
+
+    monkeypatch.setattr(dataset_analyzer, "_summarize_dataframe", raise_profile_error)
+
+    result = asyncio.run(analyze_multiple_uploaded_datasets([upload]))
+
+    assert result["datasets"][0]["success"] is False
+    assert result["datasets"][0]["analysis"] is None
+    assert "資料已讀取" in result["datasets"][0]["error"]

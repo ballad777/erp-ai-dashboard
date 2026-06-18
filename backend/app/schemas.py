@@ -10,6 +10,18 @@ class DatasetAnalysisResponse(BaseModel):
     missing_values: dict[str, int]
     numeric_summary: dict[str, dict[str, float | int | None]]
     recommended_target_columns: list[str] = Field(default_factory=list)
+    quality_report: dict[str, object] = Field(default_factory=dict)
+    parser_warnings: list[str] = Field(default_factory=list)
+    dataset_hash: str | None = None
+    schema_fingerprint: str | None = None
+    run_id: str | None = None
+    dataset_id: str | None = None
+    run_manifest: dict[str, object] = Field(default_factory=dict)
+    plain_summary: dict[str, object] = Field(default_factory=dict)
+    confidence: dict[str, object] = Field(default_factory=dict)
+    evidence: list[dict[str, object]] = Field(default_factory=list)
+    terms: list[dict[str, object]] = Field(default_factory=list)
+    research_details: dict[str, object] = Field(default_factory=dict)
 
 
 class MergedDatasetAnalysisResponse(DatasetAnalysisResponse):
@@ -18,6 +30,7 @@ class MergedDatasetAnalysisResponse(DatasetAnalysisResponse):
     source_row_counts: dict[str, int]
     merge_strategy: str
     merge_notes: list[str]
+    merge_plan: dict[str, object] = Field(default_factory=dict)
     source_file_column: str
     source_row_column: str
     common_columns: list[str]
@@ -62,6 +75,10 @@ class ModelOption(BaseModel):
     family: str
     description: str
     complexity: str
+    purpose: str = ""
+    suitable_data_types: list[str] = Field(default_factory=list)
+    difficulty_label: str = ""
+    use_cases: list[str] = Field(default_factory=list)
 
 
 class GeneratedChart(BaseModel):
@@ -93,6 +110,16 @@ class ModelAnalysisResponse(BaseModel):
     charts: list[GeneratedChart]
     selected_chart_types: list[str]
     notes: list[str]
+    run_id: str | None = None
+    dataset_id: str | None = None
+    run_manifest: dict[str, object] = Field(default_factory=dict)
+    plain_summary: dict[str, object] = Field(default_factory=dict)
+    confidence: dict[str, object] = Field(default_factory=dict)
+    evidence: list[dict[str, object]] = Field(default_factory=list)
+    terms: list[dict[str, object]] = Field(default_factory=list)
+    chart_stories: list[dict[str, object]] = Field(default_factory=list)
+    model_guidance: dict[str, object] = Field(default_factory=dict)
+    research_details: dict[str, object] = Field(default_factory=dict)
 
 
 class GeneratedCodeResponse(BaseModel):
@@ -110,6 +137,9 @@ class GeneratedCodeResponse(BaseModel):
     notebook_content: str
     dataset_path: str
     notes: list[str]
+    run_id: str | None = None
+    dataset_id: str | None = None
+    run_manifest: dict[str, object] = Field(default_factory=dict)
 
 
 class FinancialAnalysisResponse(BaseModel):
@@ -132,6 +162,16 @@ class FinancialAnalysisResponse(BaseModel):
     indicator_path: str
     indicator_url: str
     notes: list[str]
+    run_id: str | None = None
+    dataset_id: str | None = None
+    run_manifest: dict[str, object] = Field(default_factory=dict)
+    plain_summary: dict[str, object] = Field(default_factory=dict)
+    confidence: dict[str, object] = Field(default_factory=dict)
+    forecast_reliability: dict[str, object] = Field(default_factory=dict)
+    evidence: list[dict[str, object]] = Field(default_factory=list)
+    terms: list[dict[str, object]] = Field(default_factory=list)
+    chart_stories: list[dict[str, object]] = Field(default_factory=list)
+    research_details: dict[str, object] = Field(default_factory=dict)
 
 
 class AgentStepResponse(BaseModel):
@@ -146,11 +186,15 @@ class AgentWorkflowResponse(BaseModel):
     target_column: str
     agent_steps: list[AgentStepResponse]
     executive_summary: list[str]
+    decision_brief: dict[str, object] = Field(default_factory=dict)
     llm_provider: str
     dataset_summary: dict[str, object]
     model_analysis: ModelAnalysisResponse
     financial_analysis: FinancialAnalysisResponse | None = None
     notes: list[str]
+    run_id: str | None = None
+    dataset_id: str | None = None
+    run_manifest: dict[str, object] = Field(default_factory=dict)
 
 
 class ReportResponse(BaseModel):
@@ -160,3 +204,26 @@ class ReportResponse(BaseModel):
     report_url: str
     workflow: AgentWorkflowResponse
     notes: list[str]
+    run_id: str | None = None
+    dataset_id: str | None = None
+    run_manifest: dict[str, object] = Field(default_factory=dict)
+
+
+class AnalysisJobStartResponse(BaseModel):
+    job_id: str
+    status: str
+    stage: str
+
+
+class AnalysisJobResponse(BaseModel):
+    job_id: str
+    kind: str
+    status: str
+    stage: str
+    message: str
+    completed_items: int | None = None
+    total_items: int | None = None
+    elapsed_seconds: float
+    cancel_requested: bool
+    result: dict[str, object] | None = None
+    error: str | None = None

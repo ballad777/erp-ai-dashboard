@@ -11,7 +11,14 @@ import pandas as pd
 from fastapi import HTTPException, UploadFile
 
 from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes, read_uploaded_dataframe
+from app.services.analysis_progress import (
+    CancelCheck,
+    ProgressCallback,
+    emit_progress,
+    ensure_not_cancelled,
+)
 from app.services.financial_analyzer import run_financial_analysis
+from app.services.insight_narrative import build_decision_brief
 from app.services.model_runner import run_model_analysis
 
 
@@ -33,7 +40,11 @@ async def run_uploaded_agent_workflow(
     automl_mode: str = "quick",
     date_column: str | None = None,
     price_column: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    emit_progress(progress_callback, "reading_data", "正在讀取分析資料。")
+    ensure_not_cancelled(should_cancel)
     df, file_name = await read_uploaded_dataframe(file)
     return run_agent_workflow(
         df=df,
@@ -46,6 +57,8 @@ async def run_uploaded_agent_workflow(
         automl_mode=automl_mode,
         date_column=date_column,
         price_column=price_column,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
 
 
@@ -59,12 +72,16 @@ async def run_uploaded_merged_agent_workflow(
     automl_mode: str = "quick",
     date_column: str | None = None,
     price_column: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
     if len(files) < 2:
         raise HTTPException(status_code=400, detail="AI 協作合併分析至少需要 2 個檔案。")
 
     loaded_datasets: list[tuple[str, pd.DataFrame]] = []
-    for file in files:
+    for index, file in enumerate(files):
+        ensure_not_cancelled(should_cancel)
+        emit_progress(progress_callback, "reading_data", "正在讀取合併分析資料。", index, len(files))
         df, file_name = await read_uploaded_dataframe(file)
         loaded_datasets.append((file_name, df))
 
@@ -80,6 +97,8 @@ async def run_uploaded_merged_agent_workflow(
         automl_mode=automl_mode,
         date_column=date_column,
         price_column=price_column,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
     result["agent_steps"].insert(
         0,
@@ -104,9 +123,13 @@ def run_agent_workflow(
     automl_mode: str = "quick",
     date_column: str | None = None,
     price_column: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
     agent_steps: list[AgentStep] = []
 
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "profiling_data", "正在建立資料輪廓。")
     dataset_summary = analyze_dataframe(df, file_name=file_name)
     agent_steps.append(
         AgentStep(
@@ -130,6 +153,8 @@ def run_agent_workflow(
         model_selection_mode=model_selection_mode,
         selected_models=selected_models,
         automl_mode=automl_mode,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
     best_model = _best_model_name(model_analysis)
     agent_steps.append(
@@ -148,11 +173,14 @@ def run_agent_workflow(
 
     financial_analysis: dict[str, Any] | None = None
     try:
+        ensure_not_cancelled(should_cancel)
         financial_analysis = run_financial_analysis(
             df=df,
             file_name=file_name,
             date_column=date_column,
             price_column=price_column,
+            progress_callback=progress_callback,
+            should_cancel=should_cancel,
         )
         agent_steps.append(
             AgentStep(
@@ -189,14 +217,25 @@ def run_agent_workflow(
         )
     )
 
-    deterministic_summary = _build_agent_summary(dataset_summary, model_analysis, financial_analysis)
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "generating_insights", "正在整理分析摘要與限制。")
+    decision_brief = build_decision_brief(
+        dataset_summary=dataset_summary,
+        model_analysis=model_analysis,
+        financial_analysis=financial_analysis,
+    )
+    deterministic_summary = decision_brief["executive_summary"]
     llm_summary, llm_provider, llm_notes = _try_llm_summary(deterministic_summary)
     agent_steps.append(
         AgentStep(
             agent_name="報告代理",
             status="completed",
-            summary="已生成分析摘要；若環境有 LLM 金鑰，會優先使用 LLM 強化文字。",
-            outputs={"llm_provider": llm_provider, "notes": llm_notes},
+            summary="已將模型、圖表與資料品質結果轉換成一般人可讀的決策摘要。",
+            outputs={
+                "llm_provider": llm_provider,
+                "notes": llm_notes,
+                "priority_findings": decision_brief["priority_findings"],
+            },
         )
     )
 
@@ -205,6 +244,7 @@ def run_agent_workflow(
         "target_column": target_column,
         "agent_steps": [step.__dict__ for step in agent_steps],
         "executive_summary": llm_summary,
+        "decision_brief": decision_brief,
         "llm_provider": llm_provider,
         "dataset_summary": dataset_summary,
         "model_analysis": model_analysis,
@@ -240,7 +280,7 @@ def _build_agent_summary(
             f"金融分析代理已完成金融分析，訊號為「{financial_analysis['trend_label']}」，VaR 95% 為 {financial_analysis['var_95']}。"
         )
     else:
-        summary.append("金融分析代理已檢查資料欄位，本資料未達金融分析條件或尚未指定日期與價格欄位。")
+        summary.append("金融分析代理已檢查資料欄位，本資料未達金融分析條件或尚未指定日期與價格/指數/數值欄位。")
     return summary
 
 

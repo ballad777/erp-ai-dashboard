@@ -90,8 +90,10 @@ def test_generate_code_api_returns_downloadable_artifacts() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["python_url"].endswith(".py")
-    assert payload["notebook_url"].endswith(".ipynb")
+    assert Path(payload["python_path"]).suffix == ".py"
+    assert Path(payload["notebook_path"]).suffix == ".ipynb"
+    assert payload["python_url"].startswith("/api/artifacts/")
+    assert payload["notebook_url"].startswith("/api/artifacts/")
     assert "train_test_split" in payload["python_content"]
     assert "智能金融資料分析自動生成 Notebook" in payload["notebook_content"]
     assert (REPO_ROOT / payload["python_path"]).exists()
@@ -122,5 +124,7 @@ def test_generate_merged_code_api_returns_downloadable_artifacts() -> None:
     assert payload["file_name"] == "merged_dataset.csv"
     assert payload["model_name"] == "隨機森林"
     assert "residual_plot" in payload["selected_chart_types"]
+    assert payload["python_url"].startswith("/api/artifacts/")
+    assert payload["notebook_url"].startswith("/api/artifacts/")
     assert (REPO_ROOT / payload["python_path"]).exists()
     assert (REPO_ROOT / payload["notebook_path"]).exists()

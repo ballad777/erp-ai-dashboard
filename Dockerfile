@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim AS frontend-builder
+FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -12,7 +12,7 @@ COPY frontend/ ./
 RUN npm run build -- --webpack
 
 
-FROM node:20-bookworm-slim AS runner
+FROM node:22-bookworm-slim AS runner
 
 WORKDIR /app
 
@@ -49,7 +49,6 @@ COPY --from=frontend-builder /app/frontend/.next frontend/.next
 COPY --from=frontend-builder /app/frontend/node_modules frontend/node_modules
 COPY --from=frontend-builder /app/frontend/package*.json frontend/
 COPY --from=frontend-builder /app/frontend/next.config.js frontend/next.config.js
-COPY --from=frontend-builder /app/frontend/public frontend/public
 
 COPY scripts/start-production.sh scripts/start-production.sh
 RUN chmod +x scripts/start-production.sh

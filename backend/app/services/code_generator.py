@@ -9,6 +9,7 @@ from uuid import uuid4
 import pandas as pd
 from fastapi import HTTPException, UploadFile
 
+from app.services.artifact_access import create_artifact_url
 from app.services.dataset_analyzer import merge_dataframes, read_uploaded_dataframe
 from app.services.model_runner import (
     REPO_ROOT,
@@ -22,8 +23,9 @@ from app.services.model_runner import (
     _select_chart_types,
 )
 
-CODE_DIR = REPO_ROOT / "generated_outputs" / "code"
-DATA_DIR = REPO_ROOT / "generated_outputs" / "data"
+GENERATED_OUTPUTS_DIR = REPO_ROOT / "generated_outputs"
+CODE_DIR = GENERATED_OUTPUTS_DIR / "code"
+DATA_DIR = GENERATED_OUTPUTS_DIR / "data"
 
 MODEL_NAME_ALIASES = {
     "linear_regression": "線性迴歸",
@@ -182,10 +184,16 @@ def generate_code_artifacts(
         "problem_type": problem_type,
         "selected_chart_types": selected_chart_types,
         "python_path": str(python_path.relative_to(REPO_ROOT)),
-        "python_url": f"/generated_outputs/code/{python_path.name}",
+        "python_url": create_artifact_url(
+            python_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
         "python_content": code,
         "notebook_path": str(notebook_path.relative_to(REPO_ROOT)),
-        "notebook_url": f"/generated_outputs/code/{notebook_path.name}",
+        "notebook_url": create_artifact_url(
+            notebook_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
         "notebook_content": notebook_content,
         "dataset_path": str(data_path.relative_to(REPO_ROOT)),
         "notes": generation_notes,

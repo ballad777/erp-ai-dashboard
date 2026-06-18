@@ -1,0 +1,119 @@
+:root {
+  --product-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --product-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-fast: 180ms;
+  --motion-standard: 240ms;
+  --motion-section: 380ms;
+  --motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.product-popover[data-state="open"] {
+  animation: product-popover-in 180ms var(--product-ease-out);
+}
+
+.product-popover[data-state="closed"] {
+  animation: product-popover-out 130ms ease;
+}
+
+@keyframes product-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.985);
+  }
+}
+
+@keyframes product-popover-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.99);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .data-lens-board {
+    transition:
+      transform 220ms var(--product-ease-out),
+      box-shadow 220ms ease;
+  }
+
+  .data-lens-board:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 38px 86px rgb(20 38 58 / 17%),
+      inset 0 1px rgb(255 255 255 / 60%);
+  }
+
+  .theme-picker-grid button {
+    transition:
+      color 180ms ease,
+      background-color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      transform 140ms var(--product-ease-out);
+  }
+
+  .theme-picker-grid button:hover {
+    transform: translateY(-1px);
+  }
+
+  .product-nav-label {
+    transition:
+      opacity 160ms ease,
+      transform 160ms var(--product-ease-out);
+  }
+
+  .analysis-mode-grid label,
+  .analysis-segmented-control button,
+  .recommended-targets button,
+  .model-selection-options label,
+  .model-selection-toolbar button,
+  .analysis-next-action,
+  .result-next-action,
+  .inline-code-toolbar button {
+    transition:
+      color var(--motion-fast) var(--motion-ease),
+      background-color var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease),
+      box-shadow var(--motion-fast) var(--motion-ease),
+      transform var(--motion-fast) var(--motion-ease);
+  }
+
+  .analysis-mode-grid label:hover,
+  .model-selection-options label:hover,
+  .analysis-next-action:hover,
+  .result-next-action:hover {
+    transform: translateY(-1px);
+  }
+
+  .analysis-recommendation-panel,
+  .model-selection-drawer {
+    transition:
+      border-color var(--motion-standard) var(--motion-ease),
+      box-shadow var(--motion-standard) var(--motion-ease);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .data-lens-board,
+  .data-lens-orb,
+  .data-lens-insight,
+  .product-popover,
+  .theme-picker-grid button,
+  .analysis-focus-workspace *,
+  .model-selection-drawer,
+  .analysis-recommendation-panel {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .data-lens-board,
+  .data-lens-orb,
+  .data-lens-insight,
+  .analysis-mode-grid label,
+  .model-selection-options label,
+  .analysis-next-action,
+  .result-next-action {
+    transform: none !important;
+  }
+}

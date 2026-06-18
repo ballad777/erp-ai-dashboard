@@ -1,5 +1,807 @@
 # 智能金融資料分析開發進度
 
+## 2026-06-17：徹底修正外掛注入造成的 Hydration Overlay，並重新驗證真實資料分析
+
+### 已完成檔案
+
+- `frontend/src/app/layout.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/MarketingShell.tsx`
+- `frontend/src/components/LanguageSwitch.tsx`
+- `frontend/src/components/__tests__/AppShell.test.tsx`
+- `frontend/src/components/__tests__/RootLayout.test.tsx`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 重新檢查使用者提供的錯誤檔，確認這次 hydration mismatch 已不是單純手機導覽連結問題，而是瀏覽器外掛 `hive_keychain.js` 將 `chrome-extension://...` script 插入 `<head>`，與產品 theme 初始化 script 發生 head 子節點順序衝突。
+- 將 `finai-product-theme-init` 從 React 管理的 `<head>` 移到 `<body>` 第一個 script，避免外掛污染 head 時觸發 Next.js hydration overlay。
+- AppShell 的 skip link 也加入 `suppressHydrationWarning`，避免外掛替 `#main-content` 連結加 `keychainify-checked` class 時報錯。
+- MarketingShell 與 LanguageSwitch 的常駐連結同步加入外掛容錯，避免首頁與語言切換連結出現同型 hydration mismatch。
+- 新增 `RootLayout.test.tsx`，鎖定 theme bootstrap script 不得再出現在 head-managed markup。
+- 擴大 `AppShell.test.tsx`，改為模擬外掛替所有 shell `<a>` 加 `keychainify-checked`，而不是只測手機導覽。
+
+### 如何啟動
+
+```bash
+cd frontend
+npm run dev -- --hostname 127.0.0.1 --port 3012
+```
+
+後端測試用：
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8002
+```
+
+### 如何測試
+
+```bash
+cd frontend
+npm run test:run -- RootLayout.test.tsx
+npm run test:run -- AppShell.test.tsx MarketingShell.test.tsx ThemePicker.test.tsx
+npm run test:run
+npm run typecheck
+npm run build -- --webpack
+
+cd ../backend
+.venv/bin/pytest tests/test_dataset_analyzer.py tests/test_model_runner.py tests/test_api_hardening.py -q
+```
+
+真實資料 API 驗證：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8002/api/datasets/analyze-multiple \
+  -F files=@sample_datasets/housing_sample.csv
+
+curl -sS -X POST http://127.0.0.1:8002/api/datasets/analyze-multiple \
+  -F files=@sample_datasets/stock_prices_sample.csv
+
+curl -sS -X POST http://127.0.0.1:8002/api/models/analyze \
+  -F file=@sample_datasets/housing_sample.csv \
+  -F target_column=price_usd \
+  -F analysis_mode=regression \
+  -F chart_types=model_comparison,feature_importance,predicted_vs_actual,residual_plot \
+  -F model_selection_mode=auto \
+  -F selected_models=auto \
+  -F automl_mode=off
+```
+
+### 本次驗證結果
+
+- `RootLayout.test.tsx`：先紅後綠；修正前可重現 head script 問題，修正後 1 passed。
+- `AppShell.test.tsx MarketingShell.test.tsx ThemePicker.test.tsx`：3 個測試檔、12 passed。
+- `npm run test:run`：19 個測試檔、69 passed。
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過。
+- `backend/.venv/bin/pytest tests/test_dataset_analyzer.py tests/test_model_runner.py tests/test_api_hardening.py -q`：17 passed。
+- Browser 驗收 `http://127.0.0.1:3012/app/data`：
+  - 頁面 title 為「智能金融資料分析」。
+  - DOM 有「資料工作區」與「上傳佇列」，不是空白頁。
+  - 未偵測到 `A tree hydrated` 或 `Console Error` overlay。
+  - 本次 reload 後 console 沒有 hydration、tree hydrated、keychainify、hive_keychain 或 `finai-product-theme-init` 相關錯誤。
+  - `finai-product-theme-init` 目前位於 `BODY`，head 內數量為 0。
+  - 從「資料」切到「模型」再切回「資料」後，仍無相關錯誤。
+- 真實資料摘要驗證：
+  - `housing_sample.csv`：後端回傳 12 筆、6 欄、`age_years` 缺失 1；與 pandas 直接讀 CSV 的列數、欄數、缺失值與所有數值摘要完全一致，`comparison_errors: []`。
+  - `stock_prices_sample.csv`：後端回傳 12 筆、7 欄、`close` 缺失 1；與 pandas 直接讀 CSV 的列數、欄數、缺失值與所有數值摘要完全一致，`comparison_errors: []`。
+- 真實模型分析驗證：
+  - 使用 `housing_sample.csv` 與 target `price_usd` 呼叫 `/api/models/analyze`，HTTP 200。
+  - 回傳 `row_count_used=12`、`feature_count_used=5`，與原始 CSV 對應。
+  - 實際訓練 8 個模型並產生 4 張圖表。
+  - 已檢查 4 個圖表檔案存在且非空白：model comparison、feature importance、predicted vs actual、residual plot。
+
+### Known Issues
+
+- 使用者瀏覽器若啟用會修改 DOM 的外掛，仍可能在尚未加 `suppressHydrationWarning` 的非主要內容連結上造成 React attribute mismatch；目前已處理 RootLayout、AppShell、MarketingShell 與 LanguageSwitch 的主要入口。
+- 本輪 Browser 可成功截圖；若使用者分頁仍顯示舊 overlay，通常是舊 dev overlay 狀態殘留，請重新整理或重開該分頁。
+- 模型分數會受資料量與 train/test split 影響；本輪只驗證模型確實使用上傳資料、結果欄位正確、圖表真實產生，不宣稱小型 sample 的模型有正式商業預測力。
+
+### 下一階段要做什麼
+
+- 若再次出現 hydration mismatch，優先確認錯誤 diff 指向哪個具體元素，再加入對應回歸測試，不再用單點猜測修法。
+- 可新增一個全站 hydration smoke test，批量模擬外掛替所有主要 shell 連結加 class，覆蓋首頁與工作區主要頁。
+
+## 2026-06-17：修正瀏覽器外掛造成的 Next.js Hydration 錯誤
+
+### 已完成檔案
+
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/__tests__/AppShell.test.tsx`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 依使用者提供的 Next.js console error 追查，根因是瀏覽器外掛在 React hydration 前替導覽連結加入 `keychainify-checked` class。
+- AppShell 的品牌連結、桌面導覽、上方加入資料連結與手機導覽連結已加入 `suppressHydrationWarning`，讓外掛注入的非應用程式 class 不再觸發 Next.js hydration mismatch overlay。
+- 此修正只針對外部環境修改 DOM 屬性的情境，不改動資料分析、模型分析或報告邏輯。
+- 新增回歸測試，模擬外掛在 `.mobile-product-nav a` 上加入 `keychainify-checked`，並確認 hydration 不再輸出 `A tree hydrated but some attributes...` 錯誤。
+
+### 如何啟動
+
+```bash
+cd frontend
+npm run dev -- --hostname 127.0.0.1 --port 3012
+```
+
+測試網址：
+
+```text
+http://127.0.0.1:3012/app/data
+```
+
+### 如何測試
+
+```bash
+cd frontend
+npm run test:run -- AppShell.test.tsx
+npm run typecheck
+npm run build -- --webpack
+```
+
+人工驗收：
+
+1. 開啟 `http://127.0.0.1:3012/app/data`。
+2. 重新整理頁面。
+3. 確認沒有 Next.js hydration error overlay。
+4. 點選底部或側邊工作區導覽，往返「模型」與「資料」。
+5. 確認 console 沒有 `hydrated`、`hydration`、`keychainify` 相關錯誤。
+
+### 本次驗證結果
+
+- `npm run test:run -- AppShell.test.tsx`：1 個測試檔、4 passed。
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過。
+- Browser 驗收：
+  - `http://127.0.0.1:3012/app/data` 可正常載入，title 為「智能金融資料分析」。
+  - DOM 顯示「資料工作區」等有效內容，不是空白頁。
+  - 未偵測到 `A tree hydrated` 或 `Console Error` overlay。
+  - console error/warn 中沒有 hydration、tree hydrated、keychainify 相關訊息。
+  - 從「資料」切到「模型」再切回「資料」後，仍無相關錯誤。
+
+### Known Issues
+
+- Browser screenshot API 在本輪驗收時回報 CDP `Page.captureScreenshot` 逾時；已改用 DOM、URL、console logs 與導覽互動作為驗證證據。
+- 如果使用者仍看到舊 overlay，通常是舊 dev overlay 狀態未清除；請重新整理頁面或重開該分頁。
+
+### 下一階段要做什麼
+
+- 若後續還有其他外掛注入屬性造成 hydration mismatch，優先用同樣方式建立可重現測試，再只針對受影響的穩定導覽/控制元素處理。
+
+## 2026-06-17：修正資料領域誤判，禁止把 Price 直接視為房價
+
+### 已完成檔案
+
+- `backend/app/services/insight_narrative.py`
+- `backend/tests/test_insight_narrative.py`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 修正資料摘要敘事層 `_infer_dataset_kind` 的錯誤規則。
+- 舊規則只要欄位含 `price` 就可能判斷為「房價或不動產資料」，導致汽車銷售資料 `quikr_car.csv` 被錯誤標示。
+- 新規則把 `price` 視為一般價格欄位，不再作為房價證據。
+- 房價或不動產資料必須同時具有足夠不動產欄位證據，例如 `house`、`housing`、`property`、`bedroom`、`sqft`、`坪`、`屋齡`、`房屋`、`樓層` 等。
+- 新增汽車銷售資料辨識，當欄位包含 `car`、`vehicle`、`kms_driven`、`fuel_type`、`transmission`、`engine`、`里程`、`燃料` 等足夠證據時，標示為「汽車銷售資料」。
+- 一般商品或交易資料只有 `Price`、`quantity` 等欄位時，保守標示為「價格或交易表格資料」，不冒充特定產業。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8002
+```
+
+前端維持：
+
+```bash
+cd frontend
+npm run dev -- --hostname 127.0.0.1 --port 3012
+```
+
+### 如何測試
+
+```bash
+cd backend
+.venv/bin/pytest tests/test_insight_narrative.py -q
+.venv/bin/pytest -q
+```
+
+人工/API 驗收：
+
+1. 上傳欄位包含 `name, company, year, Price, kms_driven, fuel_type` 的汽車資料。
+2. 資料摘要 headline 應顯示「汽車銷售資料」。
+3. headline 不應出現「房價」或「不動產」。
+
+### 本次驗證結果
+
+- `backend/.venv/bin/pytest tests/test_insight_narrative.py -q`：2 passed。
+- `backend/.venv/bin/pytest tests/test_insight_narrative.py tests/test_dataset_analyzer.py -q`：7 passed。
+- `backend/.venv/bin/pytest tests/test_api_hardening.py -q`：5 passed。
+- `backend/.venv/bin/pytest -q`：46 passed。
+- HTTP API 實測 `quikr_car_sample.csv`：
+  - 欄位：`name, company, year, Price, kms_driven, fuel_type`
+  - 回傳 headline：`這份資料看起來偏向「汽車銷售資料」...`
+  - 未出現「房價」或「不動產」。
+
+### 下一階段要做什麼
+
+- 將資料領域推論改成可回傳 evidence 與 confidence 的結構化結果，讓前端能顯示「為什麼判斷為此資料類型」。
+- 增加更多常見公開資料集測試：二手車、零售商品、醫療、體育、一般價格表，避免單一欄位造成產業誤判。
+
+## 2026-06-17：報告中心改成 AI 顧問式決策解讀
+
+### 已完成檔案
+
+- `backend/app/services/insight_narrative.py`
+- `backend/app/services/agent_orchestrator.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/report_generator.py`
+- `backend/app/schemas.py`
+- `backend/tests/test_agent_report.py`
+- `frontend/src/lib/api.ts`
+- `frontend/src/components/AgentReportPanel.tsx`
+- `frontend/src/components/__tests__/AgentReportPanel.test.tsx`
+- `frontend/src/app/globals.css`
+
+### 新增功能
+
+- 新增「決策敘事層」：把資料品質、模型結果、金融分析與圖表轉換成一般人可讀的分析摘要。
+- 報告 API 現在回傳 `decision_brief`，包含：
+  - `plain_language_summary`
+  - `priority_findings`
+  - `model_guidance`
+  - `chart_interpretations`
+  - `report_sections`
+  - `risk_and_limitations`
+  - `ai_conclusion`
+- 報告中心改成顧問式閱讀順序：先看 10 秒摘要、優先級、風險/機會/下一步，再展開模型與圖表證據。
+- 每張圖表都新增解讀欄位：圖表說明、關鍵發現、代表意義、趨勢解讀、異常說明、商業洞察、建議行動。
+- 模型選項新增一般人可讀欄位：模型用途、適用資料類型、使用難度、適用場景。
+- Word 報告升級為顧問式章節，包含分析目的、分析方法、分析結果、結果解讀、商業意義、建議行動、風險與限制、AI 結論摘要。
+
+### 如何啟動
+
+本輪測試使用不干擾既有服務的新埠：
+
+後端：
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001
+```
+
+前端：
+
+```bash
+cd frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8001 npm run build -- --webpack
+npm run start -- --hostname 127.0.0.1 --port 3011
+```
+
+### 如何測試
+
+後端：
+
+```bash
+cd backend
+.venv/bin/pytest -q
+```
+
+前端：
+
+```bash
+cd frontend
+npm run typecheck
+npm run test:run
+INTERNAL_API_BASE_URL=http://127.0.0.1:8001 npm run build -- --webpack
+```
+
+真實報告 API 手動測試：
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/api/reports/generate \
+  -F file=@sample_datasets/stock_prices_sample.csv \
+  -F target_column=close \
+  -F analysis_mode=regression \
+  -F chart_types=model_comparison,feature_importance,predicted_vs_actual,residual_plot \
+  -F model_selection_mode=custom \
+  -F selected_models=ridge,random_forest \
+  -F automl_mode=off
+```
+
+回傳應包含 `decision_brief.priority_findings`、`decision_brief.model_guidance`、`decision_brief.chart_interpretations` 與 `report_url`。
+
+### Known Issues
+
+- `decision_brief` 目前是本機規則式解讀；若未設定 `OPENAI_API_KEY`，系統會明確標示 `local_rule_based`，不假裝使用 LLM。
+- 圖表解讀會使用目前已產生的模型結果與資料品質摘要推導；尚未做更深層的殘差分群、特徵交互或因果推論。
+- Word 目前輸出 DOCX；PDF 與 ZIP 套件仍未啟用。
+
+### 下一階段
+
+- 將圖表解讀加入更細的數據證據，例如前 N 個重要特徵、最大誤差樣本、殘差群聚摘要。
+- 將報告中心接入專案歷史，讓使用者可回看每次分析的摘要與建議。
+- 若要正式對外，補正式登入、權限、資料保留政策與 audit UI。
+
+## 2026-06-17：依一致性複查補產品地基、Run Manifest 與資料品質治理
+
+### 已完成檔案
+
+- `CURRENT_STATUS.md`
+- `README.md`
+- `DEPLOYMENT.md`
+- `backend/app/database/__init__.py`
+- `backend/app/database/connection.py`
+- `backend/app/database/repository.py`
+- `backend/database/postgres_schema.sql`
+- `backend/app/main.py`
+- `backend/app/schemas.py`
+- `backend/app/services/artifact_access.py`
+- `backend/app/services/analysis_jobs.py`
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/run_governance.py`
+- `backend/tests/test_dataset_analyzer.py`
+- `backend/tests/test_model_runner.py`
+- `backend/tests/test_run_governance.py`
+- `frontend/src/lib/api.ts`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/MarketingHome.tsx`
+- `frontend/src/components/WorkspaceDashboard.tsx`
+- `frontend/src/components/ProductPreview.tsx`
+- `frontend/src/app/layout.tsx`
+- `frontend/src/app/en/layout.tsx`
+
+### 新增功能
+
+- 新增本機可執行持久化層，預設建立 `.local/finai.sqlite3`。
+- 新增 PostgreSQL DDL：User、Project、Dataset、AnalysisRun、Artifact、ModelResult、AnalysisJob、AuditLog。
+- 新增 `GET /api/auth/session`，提供封閉測試 demo identity 與 project context。
+- 主要分析 API 會建立 `run_id`、`dataset_id` 與 `run_manifest`。
+- Run Manifest 會記錄輸入檔 SHA-256、參數、模型結果與 artifact 清單。
+- Artifact token 會在 run context 內綁定 `artifact_id`、`run_id`、`project_id`、`user_id`，下載時寫入 audit log。
+- Job state 寫入資料庫；記憶體仍保留作為執行中取消控制。
+- 新增 API rate limit middleware，預設每 IP + path 每分鐘 180 次。
+- 上傳支援 JSON，前後端格式提示同步更新。
+- 資料分析新增品質報告：缺失值、重複列、常數欄位、高基數欄位、ID-like 欄位、IQR 異常值、類別不平衡、日期頻率、疑似 target leakage。
+- 多檔合併新增合併策略建議、Join key 候選與 schema conflict 檢查。
+- 模型分析新增 baseline model；分類任務在可行時使用 stratified split。
+- 模型前處理會將類別欄位明確轉成字串，避免同欄位混合數字/文字造成 OneHotEncoder 失敗。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm run build
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+後端測試：
+
+```bash
+cd backend
+.venv/bin/pytest -q
+```
+
+目前結果：`40 passed`。
+
+可用 API 手動確認：
+
+```bash
+curl -sS http://127.0.0.1:8000/api/auth/session
+curl -sS -X POST -F file=@sample_datasets/housing_sample.csv http://127.0.0.1:8000/api/datasets/analyze
+```
+
+回傳應包含 `run_id`、`dataset_id`、`schema_fingerprint`、`quality_report` 與 `run_manifest`。
+
+### Known Issues
+
+- 目前執行 repository 仍是 SQLite fallback；`backend/database/postgres_schema.sql` 已提供 PostgreSQL schema，但尚未接 PostgreSQL driver/repository。
+- 尚未接入正式登入、OAuth、密碼驗證或多租戶 Project ownership。
+- 尚未接入 Redis / Queue / Worker；長任務仍由 API process 內 thread 執行。
+- 尚未提供 SSE；前端仍使用 polling。
+- 尚未完成 artifact revoke UI、retention scheduler 與 audit 查詢介面。
+- 尚未完成 Prophet/ARIMA/ETS、正式 backtesting、預測區間與時間序列驗證。
+- 尚未完成 PDF 報告、一鍵 ZIP 套件與互動式 Plotly dashboard。
+
+### 下一階段
+
+- 將 SQLite repository 抽換為 PostgreSQL repository，導入 migration。
+- 將 analysis job 移到 Redis/worker，支援 retry、timeout、cancel 與 worker health。
+- 將前端 polling 改成 SSE，保留低頻 fallback polling。
+- 補 artifact revoke/retention/audit 管理 API 與 UI。
+
+## 2026-06-17：本機服務啟動、API 串接與瀏覽器驗收
+
+### 已完成檔案
+
+- `PROGRESS.md`
+
+### 新增功能
+
+- 本次沒有新增功能，主要補齊前一輪受環境限制而未完成的本機服務與瀏覽器驗收。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+測試網址：
+
+- `http://localhost:3010`
+- `http://localhost:3010/app/data`
+- `http://localhost:3010/app/models`
+
+### 如何測試
+
+已完成本機服務連線測試：
+
+```bash
+curl -sS http://127.0.0.1:8000/health
+curl -I -sS http://127.0.0.1:3010
+```
+
+結果：FastAPI health endpoint 回傳 `{"status":"ok","service":"智能金融資料分析 API"}`；Next.js production preview 回傳 HTTP 200。
+
+已完成單檔資料分析 API 測試：
+
+```bash
+curl -sS -X POST \
+  -F file=@sample_datasets/housing_sample.csv \
+  http://127.0.0.1:8000/api/datasets/analyze
+```
+
+結果：後端讀取 `housing_sample.csv`，回傳 12 筆、6 欄、`age_years` 1 筆缺失值、數值欄位摘要與推薦目標欄位。
+
+已完成模型分析 API 測試：
+
+```bash
+curl -sS -X POST \
+  -F target_column=price_usd \
+  -F analysis_mode=auto \
+  -F chart_types=auto \
+  -F model_selection_mode=auto \
+  -F selected_models=auto \
+  -F automl_mode=off \
+  -F file=@sample_datasets/housing_sample.csv \
+  http://127.0.0.1:8000/api/models/analyze
+```
+
+結果：後端自動判斷為 regression，推薦並訓練 Ridge、Lasso、ElasticNet、Random Forest、Gradient Boosting、XGBoost、KNN；同時產生模型比較、特徵重要性、預測值與實際值、殘差圖與短效 artifact URL。
+
+已完成程式碼與 Notebook 產出 API 測試：
+
+```bash
+curl -sS -X POST \
+  -F target_column=price_usd \
+  -F model_name=ridge \
+  -F analysis_mode=auto \
+  -F chart_types=auto \
+  -F file=@sample_datasets/housing_sample.csv \
+  http://127.0.0.1:8000/api/code/generate
+```
+
+結果：產生 `generated_code.py`、`notebook.ipynb`、內嵌程式碼內容與短效下載 URL。
+
+已完成金融分析 API 測試：
+
+```bash
+curl -sS -X POST \
+  -F file=@sample_datasets/stock_prices_sample.csv \
+  http://127.0.0.1:8000/api/finance/analyze
+```
+
+結果：後端自動偵測 `date` 與 `close`，產生 MA、報酬率、波動率、RSI、MACD、VaR、預測點與金融圖表。
+
+已完成報告 API 測試：
+
+```bash
+curl -sS -X POST \
+  -F target_column=price_usd \
+  -F analysis_mode=auto \
+  -F chart_types=auto \
+  -F model_selection_mode=auto \
+  -F selected_models=auto \
+  -F automl_mode=off \
+  -F file=@sample_datasets/housing_sample.csv \
+  http://127.0.0.1:8000/api/reports/generate
+```
+
+結果：產生 Word 報告、代理流程摘要、模型分析結果與短效下載 URL；未設定 `OPENAI_API_KEY` 時明確回傳本機規則摘要，不假裝 LLM 執行。
+
+已完成多檔上傳與合併分析 API 測試：
+
+```bash
+curl -sS -X POST \
+  -F files=@sample_datasets/housing_sample.csv \
+  -F files=@sample_datasets/stock_prices_sample.csv \
+  http://127.0.0.1:8000/api/datasets/analyze-multiple
+```
+
+結果：兩個檔案都讀取成功，並產生 24 筆、15 欄的合併資料摘要、來源檔案欄位、來源列號與合併說明。
+
+已完成 Browser 驗收：
+
+- `http://localhost:3010/` 桌機尺寸：首頁可渲染、標題為「智能金融資料分析」、核心 Hero 與 CTA 存在、console error 為 0。
+- `http://localhost:3010/app/data` 桌機尺寸：資料頁可渲染、console error 為 0。
+- `http://localhost:3010/app/models` 桌機尺寸：模型頁可渲染、聚焦流程與空狀態存在、console error 為 0。
+- 配色選單：存在「配色」按鈕，選單內沒有「套用」按鈕，點擊主題後選單關閉，符合點擊立即套用的互動。
+- 390 × 844 手機尺寸：首頁與模型頁都可渲染、console error 為 0。
+
+### Known Issues
+
+- Browser 工具目前沒有可用的檔案選擇 API，因此前端 `<input type="file">` 的實際檔案選取沒有用瀏覽器工具完成；本輪已用真實後端 API 上傳檔案驗證資料讀取、模型訓練與產物輸出。
+- 目前仍是本機封閉測試，不是正式多使用者部署；artifact token 已是短效 URL，但尚未接入 user/project/tenant 權限。
+- 一鍵 ZIP 套件依使用者先前要求暫不啟用。
+
+### 下一階段
+
+- 若要做可分享版本，下一階段應優先處理正式登入、專案/使用者資料隔離、持久化資料庫、背景任務佇列與公開部署設定。
+
+## 2026-06-16：稽核對齊修正、短效產物下載與聚焦模型工作區
+
+### 已完成檔案
+
+- `backend/app/main.py`
+- `backend/app/services/artifact_access.py`
+- `backend/app/services/code_generator.py`
+- `backend/app/services/financial_analyzer.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/report_generator.py`
+- `backend/tests/test_artifact_access.py`
+- `frontend/next.config.js`
+- `frontend/src/app/product-interface.css`
+- `frontend/src/app/product-motion.css`
+- `frontend/src/components/ThemeProvider.tsx`
+- `frontend/src/components/ThemePicker.tsx`
+- `frontend/src/components/PagePrimitives.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/components/analysis/AnalysisStepRail.tsx`
+- `frontend/src/components/analysis/AnalysisModeSelector.tsx`
+- `frontend/src/components/analysis/DatasetMetricStrip.tsx`
+- `frontend/src/components/analysis/AnalysisRecommendationPanel.tsx`
+- `frontend/src/components/analysis/ModelSelectionDrawer.tsx`
+- `frontend/src/components/analysis/InlineCodeViewer.tsx`
+- `frontend/src/components/__tests__/AnalysisWorkspace.test.tsx`
+- `frontend/src/components/__tests__/InlineCodeViewer.test.tsx`
+- `frontend/src/components/__tests__/SemanticColorUsage.test.ts`
+- `frontend/src/components/__tests__/ThemePicker.test.tsx`
+- `frontend/src/components/__tests__/ThemeProvider.test.tsx`
+- `README.md`
+- `PROGRESS.md`
+- `docs/audits/2026-06-15-project-plan-consistency-audit.md`
+
+### 新增功能
+
+- 後端移除 `/generated_outputs/*` 公開靜態直出，改由 `/api/artifacts/{token}` 提供短效 HMAC capability URL。
+- 模型、圖表、程式碼、Notebook、Word 報告、清理後 CSV 與模型結果 XLSX 的下載 URL 都改為 artifact token URL。
+- 配色選擇器改為點擊立即套用並保存，不再需要「套用／取消」。
+- 修正分析面板低對比文字與不支援的 `bg-white/78` class，改用語意色彩與實色 surface。
+- 模型頁改為聚焦流程台：分析步驟、目標欄位、建議目標、分析模式、資料摘要、模型策略、清楚下一步與建議面板。
+- 手動模型選擇改為可搜尋、可篩選、可清除的漸進式抽屜。
+- 沒有後端 progress 時，loading 不再輪播假步驟，只顯示等待後端狀態；有 progress 時才顯示後端 stage。
+- 程式碼預覽改為 `InlineCodeViewer`，支援 Python / Notebook 分頁、行號與複製。
+- README 已更新封閉測試定位、即時配色、短效 artifact URL 與聚焦模型流程。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Production preview：
+
+```bash
+cd frontend
+npm run build
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+目前已執行：
+
+```bash
+cd backend
+.venv/bin/pytest -q
+```
+
+結果：37 passed，71 warnings。
+
+```bash
+cd frontend
+npm run test:run
+npm run typecheck
+npm run build -- --webpack
+git diff --check
+```
+
+結果：16 個測試檔、61 個測試通過；TypeScript typecheck 通過；Next.js production build 通過；diff whitespace 檢查通過。
+
+本機服務驗收：
+
+- 前端 production preview 已成功啟動於 `http://127.0.0.1:3010`。
+- 後端 FastAPI HTTP 服務在沙盒內啟動時遇到 `listen EPERM`；改用授權模式啟動時，系統因額度限制拒絕授權，因此本輪未完成瀏覽器端 API 串接驗收。
+- Browser 外掛拒絕開啟 `http://127.0.0.1:3010`，原因為目前瀏覽器安全政策封鎖該網址；本輪未繞過該限制。
+
+Demo 流程：
+
+1. 啟動後端與前端。
+2. 到 `/app/data` 上傳 `sample_datasets/housing_sample.csv`。
+3. 到 `/app/models`，確認「選擇分析方式」只顯示主要決策與清楚下一步。
+4. 點選「配色」，確認點擊任一配色會立即套用，沒有套用按鈕。
+5. 執行模型分析，確認 loading 階段來自後端 progress。
+6. 產生程式碼，確認 Python / Notebook 可在頁面內切換、複製與下載。
+7. 點擊下載連結，確認走 `/api/artifacts/{token}`。
+
+### Known Issues
+
+- capability URL 是封閉測試保護，不是正式 user/project/tenant authorization。
+- 未完成 PostgreSQL、Project ownership、Analysis Run Manifest、Redis Worker、SSE 與 restart recovery。
+- `ARTIFACT_SIGNING_SECRET` 若未設定，token 會在服務重啟後失效；正式封閉測試部署應設定穩定 secret。
+- SVG artifact 目前會以 inline image 顯示；若未來允許使用者生成 SVG，需再加強 MIME 與內容限制。
+- 一鍵 ZIP 套件依使用者要求暫不啟用。
+- 本輪已完成測試、typecheck 與 production build；Browser 實機驗收因瀏覽器安全政策封鎖 `http://127.0.0.1:3010` 未完成。
+- 後端 HTTP 開埠驗收因本機沙盒權限與授權額度限制未完成；後端分析邏輯已由 pytest / TestClient 覆蓋。
+
+### 下一階段
+
+- Phase B：PostgreSQL domain model、Analysis Run Manifest、私人 artifact authorization、auth/project ownership、Redis worker、SSE progress 與 rate limit。
+
+## 2026-06-15：通用分析平台階段 A，產品介面
+
+### 已完成檔案
+
+- `frontend/src/lib/themes.ts`
+- `frontend/src/app/product-themes.css`
+- `frontend/src/app/product-interface.css`
+- `frontend/src/app/product-motion.css`
+- `frontend/src/components/ThemeProvider.tsx`
+- `frontend/src/components/ThemePicker.tsx`
+- `frontend/src/components/DataLensHero.tsx`
+- `frontend/src/components/WorkspaceDetailPanel.tsx`
+- `frontend/src/components/WorkspaceInsightGrid.tsx`
+- `frontend/src/components/ui/popover.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/MarketingHome.tsx`
+- `frontend/src/components/MarketingShell.tsx`
+- `frontend/src/components/WorkspaceDashboard.tsx`
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/components/MotionPrimitives.tsx`
+- `frontend/src/app/app/charts/page.tsx`
+- `frontend/src/app/en/app/charts/page.tsx`
+- `frontend/src/components/__tests__/`
+- `frontend/vitest.config.ts`
+- `frontend/src/test/setup.ts`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能
+
+- 首頁改為固定兩行的 Data Lens Hero：「看懂資料。」「找到下一步。」。
+- 右側資料分析視覺可依滑鼠位置移動透鏡，觸控與 reduced motion 會自動降級。
+- 建立十套語意配色，支援即時預覽、套用、取消、首屏同步初始化與本機持久化。
+- 深色配色同步更新既有 `--color-*` 變數，避免表格、表單或結果面板殘留亮色。
+- 桌面工作區改為 72px icon rail，平板與手機改用底部導覽。
+- 新增中英文 `/app/charts` 路由，未產生真實圖表時不顯示示範圖。
+- 總覽頁先顯示最多三個真實洞察、資料概況與下一步，再顯示完整流程與成果。
+- 模型結果新增桌面側欄／手機底部抽屜詳情，支援 Escape、背景關閉與焦點回復。
+- 加入 Vitest、Testing Library 與 jsdom，覆蓋配色、Hero、導覽、詳情面板與洞察層級。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端開發模式：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+正式模式：
+
+```bash
+cd frontend
+npm run build
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+```bash
+cd frontend
+npm run test:run
+npm run typecheck
+npm run build
+```
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest -q
+```
+
+Demo 流程：
+
+1. 開啟 `/app/data`，上傳 `sample_datasets/housing_sample.csv` 與 `sample_datasets/stock_prices_sample.csv`。
+2. 確認兩個檔案都成功讀取，並可切換單檔與合併資料。
+3. 在模型頁選擇 `price_usd`，使用自動模式，確認系統判斷為回歸並依資料推薦模型。
+4. 在金融頁使用股票資料，確認日期與 `close` 自動偵測，以及 RSI、MACD、波動率、VaR 與預測。
+5. 在模型結果中產生程式碼，確認 Python 與 Notebook 內容可直接在頁內預覽。
+6. 在報告頁產生 Word 報告，確認輸出寫入 `generated_outputs/reports/`。
+
+### 本次驗證結果
+
+- 前端測試：30 個測試全部通過。
+- 前端型別檢查：通過。
+- Next.js production build：通過，包含 `/app/charts` 與 `/en/app/charts`。
+- 後端測試：23 個測試全部通過。
+- Browser：1440×900、834×1112、390×844 均無水平溢出。
+- Browser：Hero 固定兩行，資料透鏡可互動，十套配色可預覽與保存。
+- Browser：手機導覽觸控高度 50px，配色面板未被裁切，Escape 會關閉並回復焦點。
+- 真實多檔 API：兩個 sample dataset 均成功讀取並產生 24 筆合併摘要。
+- 真實自動模型 API：房價資料判斷為回歸，自動選出 7 個候選模型並產生 4 張圖。
+- 真實金融 API：產生 RSI、MACD、波動率、VaR 與 5 個預測點。
+- 真實輸出：已產生 Python、Notebook、Word 報告、PNG 圖表與 joblib 模型檔。
+
+### Known Issues
+
+- 一鍵 ZIP 套件依使用者要求暫不啟用。
+- Browser runtime 沒有文件化的檔案選擇 API，因此上傳流程以真實 FastAPI multipart API、前端元件測試與 Browser 頁面狀態分開驗證。
+- Python 3.14 會出現 FastAPI / Starlette 的 `asyncio.iscoroutinefunction` deprecation warnings，不影響目前 23 個測試結果。
+- 圖表工作區目前集中呈現既有真實分析狀態；更完整的跨分析圖表索引會在後續資料持久化階段擴充。
+
+### 下一階段
+
+- PostgreSQL、Redis、背景 Worker 與跨裝置持久化分析任務。
+- 擴充通用型分類、分群、異常偵測、時間序列與 AutoML 後端能力。
+- 登入與跨裝置記憶功能仍依先前決定暫緩。
+
 ## 2026-06-09：第一階段，基礎專案
 
 ### 已完成檔案
@@ -2053,3 +2855,694 @@ curl -X POST http://127.0.0.1:8000/api/models/analyze \
 - Browser 自動化工具不能操作 macOS 原生檔案選擇器，因此前端選檔後的完整流程需人工點選本機檔案；本輪已用同一批 sample datasets 直接呼叫真實 FastAPI，驗證多檔合併與自動模型分析。
 - Browser 本輪無法模擬作業系統深色偏好；深色 tokens 與 media query 已通過 production build，仍建議在正式 Safari 與 Chrome 各做一次人工視覺驗收。
 - 開發模式左下角會出現 Next.js Dev Tools 按鈕；production build 不會顯示。
+
+## 2026-06-14：五頁 AI SaaS 工作區與分析結果漸進揭露
+
+### 已完成檔案
+
+- `frontend/src/app/page.tsx`
+- `frontend/src/app/upload/page.tsx`
+- `frontend/src/app/models/page.tsx`
+- `frontend/src/app/finance/page.tsx`
+- `frontend/src/app/reports/page.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/PagePrimitives.tsx`
+- `frontend/src/components/WorkspaceSource.tsx`
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/components/WorkspaceProvider.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/AnalysisResult.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/FinancialAnalysisPanel.tsx`
+- `frontend/src/components/AgentReportPanel.tsx`
+- `frontend/src/components/MotionPrimitives.tsx`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 將兩頁結構重建為五頁產品工作區：
+  - `/`：真實資料品質、來源、分析進度與建議下一步。
+  - `/upload`：多檔上傳、讀取、合併來源選擇與資料探索。
+  - `/models`：目標欄位、分析模式、自動或手動模型、AutoML、圖表與程式碼。
+  - `/finance`：日期／價格欄位、金融訊號、風險、技術指標與預測。
+  - `/reports`：AI 管理摘要、代理執行紀錄與 Word 報告。
+- 新增全域資料來源選擇器：
+  - 可切換每個成功讀取的檔案與合併資料集。
+  - 路由往返時保留檔案、設定、分析結果與程式碼預覽。
+- 重構資訊層級：
+  - 資料頁用總覽、欄位、缺失值、數值摘要頁籤取代同時顯示全部表格。
+  - 模型頁先顯示最佳模型與關鍵 KPI，完整比較表按需展開。
+  - 金融頁先顯示趨勢、價格、報酬、波動率與 VaR，再查看完整指標和預測。
+  - 報告頁先顯示管理摘要，代理步驟收進可展開紀錄。
+  - 程式碼仍可在頁面直接切換 Python / Notebook 預覽，不需先下載。
+- 新增真實等待與操作回饋：
+  - 多檔讀取、模型訓練、金融分析、AI 代理、報告與程式碼生成都有分段 loading。
+  - 結果使用可中斷的小幅淡入，錯誤使用 `role="alert"`，一般通知使用 `role="status"`。
+  - 清空工作區改為兩次確認，避免誤刪目前分析。
+- UX 與 accessibility 修正：
+  - 增加 skip link、語意標題、表格 `scope`、`aria-busy` 與資料完整度 progressbar。
+  - 資料和圖表 tabs 支援 Left、Right、Home、End 鍵。
+  - 所有互動元素保留清楚 `focus-visible`，手機改為固定底部導覽。
+  - 圖表加入尺寸、lazy loading 與不造成版面跳動的 aspect ratio。
+  - 支援 `prefers-reduced-motion`，降低或停用持續動畫與載入位移。
+- 視覺重建：
+  - 深色側欄作為定位層，白色實體工作面承載主要內容。
+  - 文字、數據與表格改用高對比語意色，移除會穿過閱讀區的霓虹和透明表面。
+  - 品牌色只用在目前位置、主要動作、完成狀態與關鍵結論。
+  - 桌機固定側欄，平板與手機使用五項底部導覽。
+
+### 如何啟動
+
+後端：
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm install
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+### 如何測試
+
+```bash
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+```bash
+cd backend
+./.venv/bin/pytest -q
+```
+
+人工流程：
+
+1. 在 `/upload` 加入兩個 sample datasets 並執行「讀取全部」。
+2. 切換單檔與合併資料來源，確認資料頁籤內容跟著改變。
+3. 到 `/models` 執行自動模型分析，確認先顯示最佳模型，圖表可切換，完整比較表可展開。
+4. 生成程式碼，確認 Python 與 Notebook 可直接在頁面預覽。
+5. 到 `/finance` 選擇股票資料，確認金融訊號、風險、圖表與預測來自後端結果。
+6. 到 `/reports` 執行 AI 分析並生成 Word 報告。
+7. 回到 `/`，確認分析進度與建議下一步反映目前工作區狀態。
+8. 使用鍵盤操作主要導覽、頁籤、details、表單與按鈕。
+9. 在 390px、768px、1440px 檢查無水平溢位與文字遮擋。
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過，`/`、`/upload`、`/models`、`/finance`、`/reports` 均成功預渲染。
+- `./.venv/bin/pytest -q`：16 passed。
+- `git diff --check`：通過。
+- Web Interface Guidelines 靜態審查：
+  - 修正圖表 tabs 鍵盤操作與 tabpanel 關聯。
+  - 修正錯誤通知語意、資料完整度 progressbar 與圖表固有尺寸。
+  - 修正深色模式選擇器在淺色環境誤套用的風險。
+- Turbopack build 在受限沙盒因內部程序嘗試綁定 port 而失敗；改用 Next.js 官方 webpack build 成功完成 production 驗證。
+
+### 下一階段要做什麼
+
+- 在可啟動 localhost 的環境，以 Browser 實際走完多檔上傳、模型、金融、報告和程式碼預覽。
+- 以真實 Chrome、Safari 與手機檢查深色模式、觸控目標與長欄位名稱。
+- 若實際使用數據顯示使用者需要跨重新整理保留工作區，再評估 IndexedDB；目前不長期保存本機檔案。
+
+### Known Issues
+
+- 本輪沙盒禁止綁定 localhost port；權限申請又因平台用量限制被拒絕，依系統規則不能繞過，因此沒有新的 Browser 截圖或實際 viewport 數據。
+- 專案沒有設定 `npm run lint` script；目前使用 TypeScript、production build、`git diff --check` 與後端測試作為自動化門檻。
+- 同一分頁路由往返會保留資料；重新整理或關閉分頁後，瀏覽器不會自動重新取得本機 `File`。
+## 2026-06-14：完整專案稽核與優先修正
+
+### 已完成檔案
+
+- `backend/app/main.py`
+- `backend/app/services/dataset_analyzer.py`
+- `backend/tests/test_api_hardening.py`
+- `frontend/src/lib/api.ts`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/WorkspaceSource.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/FinancialAnalysisPanel.tsx`
+- `frontend/src/components/AgentReportPanel.tsx`
+- `Dockerfile`
+- `README.md`
+- `docs/superpowers/plans/2026-06-14-project-audit-hardening.md`
+
+### 新增功能與修正
+
+- 多檔上傳新增一致邊界：單檔 25 MB、最多 20 檔、批次總容量 100 MB。
+- 前端會在檔案進入佇列前檢查限制，後端所有多檔 API 仍會再次驗證。
+- 所有前端 POST API 改用共用 request helper：
+  - 資料讀取逾時 90 秒。
+  - 模型、金融、AI、程式碼與報告分析逾時 300 秒。
+  - 統一處理斷線、非 JSON 錯誤與逾時訊息。
+- 500 與資料解析錯誤不再回傳底層例外原文；完整例外保留在伺服器 log。
+- API 回應新增 `nosniff`、frame deny、referrer policy、permissions policy 與敏感輸出 `no-store`。
+- 補上主要表單欄位的 `name` 與自動填入策略。
+- `/upload` 移除會導回同頁的重複「加入資料」動作。
+- 修正 Docker 建置複製不存在 `frontend/public` 的問題。
+- 新增 4 項安全回歸測試。
+
+### 如何啟動
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+```bash
+cd frontend
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+### 如何測試
+
+```bash
+cd backend
+./.venv/bin/pytest -q
+```
+
+```bash
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+### 本次驗證結果
+
+- 後端：20 passed。
+- 前端 TypeScript：通過。
+- Next.js production build：通過，五個產品頁均成功預渲染。
+- Browser：1440px 與 390px 的 `/`、`/upload`、`/models`、`/finance`、`/reports` 均無水平溢位。
+
+### 下一階段
+
+- 將公開輸出改為使用者隔離的私人儲存與限時下載網址。
+- 加入登入、API rate limiting、輸出清理期限與背景工作佇列。
+- 將巨型模型面板、模型服務與全域 CSS 拆成可獨立測試的模組。
+- 加入 API response 執行期 schema 驗證及分析請求的使用者取消控制。
+
+### Known Issues
+
+- `generated_outputs/` 仍是公開靜態路徑，不能用於未經隔離的敏感生產資料。
+- 分析工作仍在 Web 程序執行，高併發時可能阻塞其他請求。
+- `npm audit` 因目前環境無法連線 npm registry，依賴弱點狀態尚未完成驗證。
+- `docker build --check .` 因本機 Docker daemon 未啟動而無法執行；已修正可確定會失敗的 `frontend/public` 複製路徑，完整容器建置仍需在 Docker 可用時補驗。
+
+## 2026-06-14：品牌首頁、產品工作區與真實分析進度完成
+
+### 已完成檔案
+
+- `frontend/src/app/layout.tsx`
+- `frontend/src/app/page.tsx`
+- `frontend/src/app/app/**`
+- `frontend/src/app/en/**`
+- `frontend/src/components/MarketingShell.tsx`
+- `frontend/src/components/MarketingHome.tsx`
+- `frontend/src/components/ProductPreview.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/WorkspaceDashboard.tsx`
+- `frontend/src/components/WorkspaceProvider.tsx`
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/components/LocaleProvider.tsx`
+- `frontend/src/components/LanguageSwitch.tsx`
+- `frontend/src/components/FeedbackProvider.tsx`
+- `frontend/src/components/PagePrimitives.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/AnalysisResult.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/FinancialAnalysisPanel.tsx`
+- `frontend/src/components/AgentReportPanel.tsx`
+- `frontend/src/lib/api.ts`
+- `frontend/src/lib/workspace-storage.ts`
+- `frontend/src/app/globals.css`
+- `backend/app/main.py`
+- `backend/app/schemas.py`
+- `backend/app/services/analysis_jobs.py`
+- `backend/app/services/analysis_progress.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/financial_analyzer.py`
+- `backend/app/services/agent_orchestrator.py`
+- `backend/app/services/report_generator.py`
+- `backend/tests/test_analysis_jobs.py`
+- `README.md`
+- `docs/superpowers/plans/2026-06-14-product-experience-rebuild.md`
+
+### 新增功能與修正
+
+- 建立成熟 SaaS 資訊架構：
+  - `/` 為品牌首頁。
+  - `/app` 為分析總覽。
+  - `/app/data`、`/app/models`、`/app/finance`、`/app/reports` 為完整工作區。
+  - 舊 `/upload`、`/models`、`/finance`、`/reports` 保留 server redirect。
+- 建立繁中優先與英文切換：
+  - `/en`、`/en/app/*` 對應所有核心頁面。
+  - 切換語言保留目前功能路徑並更新 `html lang`。
+- 首頁使用核心敘事「把複雜資料，變成清楚的下一步。」：
+  - 分析旅程、資料理解、模型選擇、金融洞察、交付成果與真實分析原則皆連到實際功能。
+  - 首頁預覽沒有資料時不顯示模擬數字。
+- 工作區使用 IndexedDB 保存 File blobs、摘要、結果、程式碼與目前來源：
+  - 回首頁、切換路由或重新整理後仍可繼續。
+  - 恢復時會清除中斷的 loading / running 暫態旗標。
+- 建立真實後端分析工作：
+  - `/api/jobs/models`
+  - `/api/jobs/finance`
+  - `/api/jobs/agents`
+  - `/api/jobs/reports`
+  - `GET /api/jobs/{job_id}` 查詢真實階段、完成數與耗時。
+  - `DELETE /api/jobs/{job_id}` 協作取消目前工作。
+- 模型、金融、代理與報告面板顯示後端進度，不再只使用固定輪播文案。
+- 程式碼與 Notebook 仍可直接在模型頁內預覽，並保留下載。
+- 介面音效預設關閉，可在工作區設定開啟。
+- 修正系統深色偏好造成淺色首頁低對比的問題；產品固定使用設計指定的高對比淺色主題。
+- 修正英文頁切回繁中後 `html lang` 可能殘留英文的 accessibility 問題。
+
+### 如何啟動
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+```bash
+cd frontend
+npm run build -- --webpack
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+開啟 `http://127.0.0.1:3010`。
+
+### 如何測試
+
+```bash
+cd backend
+./.venv/bin/python -m pytest tests -q
+```
+
+```bash
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+實際流程：
+
+1. 在 `/app/data` 上傳 `sample_datasets/housing_sample.csv` 與 `stock_prices_sample.csv`。
+2. 執行多檔讀取，切換單檔與合併來源。
+3. 在 `/app/models` 使用自動模式，確認系統依 target 與資料型態選出候選模型。
+4. 觀察真實訓練階段、模型完成數與耗時，再查看最佳模型、圖表與頁內程式碼。
+5. 在 `/app/finance` 使用股票資料執行金融指標與預測。
+6. 在 `/app/reports` 執行代理分析並生成 Word 報告。
+7. 回到 `/app` 與 `/`，確認資料和結果仍存在。
+8. 切換 `/en`，確認英文導覽、表單、狀態與操作路徑。
+
+### 本次驗證結果
+
+- `npm run typecheck`：通過。
+- `npm run build -- --webpack`：通過，18 個路由完成 production prerender。
+- `./.venv/bin/python -m pytest tests -q`：23 passed。
+- 真實工作 API 整合測試：
+  - 上傳 `housing_sample.csv` 到 `/api/jobs/models`。
+  - 輪詢取得真實分析階段。
+  - 自動判斷為 regression。
+  - 回傳多個實際模型結果與 `model_comparison` 圖表。
+- Production Browser 驗收：
+  - 1280px 首頁、工作區與資料頁無水平溢位，console error / warn 為空。
+  - 768px 與 390px 正確隱藏桌面側欄、顯示底部導覽，無水平溢位。
+  - 多檔 input 保留 `multiple`，上傳限制文字與空狀態正確。
+  - 英文 `/en/app/data` 正確顯示英文介面與 `html lang="en"`。
+  - 從前端網域實際呼叫模型 API，`housing_sample.csv` 自動判斷為 regression，執行 Ridge 與 Random Forest 並產生模型比較圖。
+- `git diff --check`：通過。
+
+### 下一階段要做什麼
+
+- 在允許綁定 localhost 的執行環境補跑 Browser 視覺驗收：390px、768px、1440px。
+- 正式公開上架前加入登入、租戶隔離、限時下載、rate limiting 與獨立工作 worker。
+
+### Known Issues
+
+- 英文模式已完整涵蓋產品導覽、表單、狀態與互動；後端生成的部分模型說明、圖表標題、金融摘要與 Word 報告內容仍以繁中為主。
+- 工作佇列目前是單程序記憶體實作；適合本機與單實例驗收，正式多實例部署應改用 Redis / Celery / RQ 等持久化工作系統。
+- `generated_outputs/` 尚未做使用者隔離，不應直接處理公開環境的敏感金融資料。
+
+## 2026-06-15：全站文字對比與配色入口修正
+
+### 已完成檔案
+
+- `frontend/src/components/DataLensHero.tsx`
+- `frontend/src/components/ThemePicker.tsx`
+- `frontend/src/components/MarketingShell.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/FinancialAnalysisPanel.tsx`
+- `frontend/src/components/AgentReportPanel.tsx`
+- `frontend/src/app/product-interface.css`
+- `frontend/src/components/__tests__/DataLensHero.test.tsx`
+- `frontend/src/components/__tests__/ThemePicker.test.tsx`
+- `frontend/src/components/__tests__/MarketingShell.test.tsx`
+- `frontend/src/components/__tests__/SemanticColorUsage.test.ts`
+
+### 新增功能與修正
+
+- 修正 `text-muted` 誤用背景 token，導致模型、金融與報告頁文字接近白色的問題。
+- 為舊版 `bg-white`、`bg-slate-50`、藍綠提示背景與文字類別加入產品主題映射，避免深色配色出現亮字配白底。
+- 配色按鈕改為「調色盤圖示 + 配色」文字，並加入首頁導覽列；手機版仍保持可見。
+- 首頁標題改為「看懂資料／找到下一步」，移除中英文句號。
+- 10 組配色的主要與次要文字皆使用語意化 token；次要文字對表面最低對比為 5.07:1。
+
+### 如何測試
+
+```bash
+cd frontend
+npm run test:run
+npm run typecheck
+```
+
+### 本次驗證結果
+
+- 前端測試：36 passed。
+- TypeScript 型別檢查：通過。
+- `git diff --check`：通過。
+- 正式版建置與 Browser 視覺驗收因本次工具執行額度限制無法重新執行，未將其標示為已通過。
+
+### 下一階段要做什麼
+
+- 工具限制解除後補跑 production build。
+- 在首頁、模型頁與深色配色下分別補驗 390px、768px、1440px 視覺對比與配色選單位置。
+
+## 2026-06-17：一般人可讀與研究者深挖改善
+
+### 依據文件
+
+- `docs/strategy/2026-06-17-layperson-and-researcher-improvement-plan.md`
+
+### 已完成檔案
+
+- `backend/app/services/metric_glossary.py`
+- `backend/app/services/insight_narrative.py`
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/financial_analyzer.py`
+- `backend/app/services/agent_orchestrator.py`
+- `backend/app/services/report_generator.py`
+- `backend/app/schemas.py`
+- `backend/tests/test_dataset_analyzer.py`
+- `backend/tests/test_model_runner.py`
+- `backend/tests/test_financial_analyzer.py`
+- `backend/tests/test_agent_report.py`
+- `frontend/src/components/InsightExplainers.tsx`
+- `frontend/src/components/AnalysisResult.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/components/FinancialAnalysisPanel.tsx`
+- `frontend/src/components/WorkspaceDashboard.tsx`
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/components/PagePrimitives.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/__tests__/InsightExplainers.test.tsx`
+- `frontend/src/lib/api.ts`
+- `frontend/src/app/globals.css`
+
+### 新增功能
+
+- 建立通用指標字典，涵蓋資料完整度、缺失值、平均數、中位數、標準差、RMSE、MAE、R²、Accuracy、F1-score、Feature importance、Residual、Return、Volatility、Moving Average、RSI、MACD、VaR、Forecast。
+- 資料、模型與金融分析 API 新增一致解釋欄位：`plain_summary`、`confidence`、`evidence`、`terms`、`research_details`。
+- 模型與金融圖表新增 `chart_stories`，每張圖表提供「這張圖在看什麼、關鍵發現、代表意義、不能證明什麼、建議下一步」。
+- 金融分析新增 `forecast_reliability`，把線性預測改以「基準情境估計」呈現，並在低可信或未回測情境顯示明確警告。
+- 金融欄位文案從「價格」泛化為「價格/指數/數值」，避免非股價資料被誤導。
+- 前端新增閱讀深度控制：`簡明`、`標準`、`研究`，並記住使用者偏好。
+- 新增共用解釋元件：`InsightHeadline`、`PlainSummaryGrid`、`ConfidenceBadge`、`MetricExplainer`、`ChartStoryPanel`、`ResearchDetailsDrawer`、`EvidenceList`。
+- 結果頁、模型頁與金融頁第一屏先顯示白話摘要、可信度、支撐證據與下一步，而不是直接丟出大量技術指標。
+- Word 報告圖表段落加入「不能證明什麼」，降低圖表被過度解讀的風險。
+
+### 如何啟動
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+```bash
+cd frontend
+npm run build -- --webpack
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+```bash
+cd backend
+./.venv/bin/python -m pytest tests -q
+```
+
+```bash
+cd frontend
+npm run test:run
+npm run typecheck
+npm run build -- --webpack
+```
+
+人工驗收重點：
+
+1. 上傳任一 CSV / Excel / JSON 後，資料結果第一屏應先看到一句話結論、可信度與下一步。
+2. 切換閱讀深度為「研究」後，指標卡應顯示技術定義、公式、方法、參數與限制。
+3. 模型圖表下方應有圖表解讀，不只顯示圖片。
+4. 金融頁的時間序列輸出應標示為「基準情境估計」，並顯示非投資建議與可信度警告。
+5. Word 報告中每張圖表都應包含圖表摘要、解讀、限制與建議，而不是只貼圖。
+
+### 本次驗證結果
+
+- `backend/.venv/bin/pytest backend/tests/test_dataset_analyzer.py backend/tests/test_model_runner.py backend/tests/test_financial_analyzer.py backend/tests/test_agent_report.py -q`：14 passed。
+- `npm run test:run`：18 個測試檔、66 passed。
+- 從 repo 根目錄執行 `backend/.venv/bin/pytest -q` 會因測試匯入路徑找不到 `app` 而失敗；正確方式是從 `backend/` 目錄執行。
+- `cd backend && .venv/bin/pytest -q`：40 passed。
+- `cd frontend && npm run typecheck`：通過。
+- `cd frontend && npm run build -- --webpack`：通過。
+- `INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack`：通過，用於 production browser 驗收。
+- `git diff --check`：通過。
+- API 驗收：
+  - `/api/datasets/analyze` 使用 `sample_datasets/housing_sample.csv`，回傳真實列欄統計、缺失值、資料品質、`plain_summary`、`confidence`、`evidence`、`terms`、`research_details`。
+  - `/api/models/analyze` 使用 `housing_sample.csv` 與 `price_usd`，自動判斷 regression，執行 baseline 與多個推薦模型，回傳最佳模型摘要、baseline 對照、模型推薦理由、`terms`、`chart_stories`、`research_details`。
+  - `/api/finance/analyze` 使用 `stock_prices_sample.csv`，回傳 MA、報酬率、波動率、RSI、MACD、VaR、基準情境估計、`forecast_reliability`、`chart_stories`、非投資建議式限制。
+- Browser 驗收：
+  - production frontend `http://127.0.0.1:3012` 搭配 backend `http://127.0.0.1:8002` 正常啟動。
+  - 1440px 首頁與 `/app` 無水平溢位，品牌首頁、工作區總覽、配色入口與真實資料提示可見。
+  - 工作區設定可開啟，確認有「閱讀深度：簡明 / 標準 / 研究」，點選「研究」後按鈕狀態為 selected。
+  - 390px `/app` 與 `/app/data` 無水平溢位，底部導覽、上傳文案與資料準備狀態正常。
+
+### 下一階段要做什麼
+
+- 補強報告頁的「一般人報告 / 研究附錄」切換。
+- 增加圖表原始資料下載。
+- 增加 baseline 對照的更完整視覺化。
+- 做非資料背景使用者理解度測試，驗證是否能在 3 分鐘內說出主要結論、限制與下一步。
+
+### Known Issues
+
+- 目前核心白話解釋採規則式模板；未設定 `OPENAI_API_KEY` 時不會假裝呼叫外部 LLM。
+- 金融預測目前是基準情境估計，尚未加入 ARIMA / Prophet / LSTM 等正式回測流程，不應解讀為投資建議。
+- 研究模式已顯示方法、參數與限制；圖表原始資料下載仍待補強。
+
+## 2026-06-17：圖表工作區顯示真實分析圖表修正
+
+### 已完成檔案
+
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/__tests__/WorkspaceToolPages.test.tsx`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 修正圖表工作區固定顯示「先完成分析」空狀態的問題。
+- 圖表工作區現在會依目前資料來源讀取 workspace 狀態中的：
+  - `${sourceKey}:model:result`
+  - `${sourceKey}:finance:result`
+- 若模型或金融分析已產生 `charts`，會在 `/app/charts` 集中顯示真實圖表。
+- 若後端同時回傳 `chart_stories`，圖表工作區會顯示圖表說明、關鍵發現、代表意義與建議下一步。
+- 新增圖表 gallery 樣式，支援多張圖表在同一頁清楚排列。
+
+### 如何啟動
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8002
+```
+
+```bash
+cd frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run start -- --hostname 127.0.0.1 --port 3012
+```
+
+### 如何測試
+
+```bash
+cd frontend
+npm run test:run -- WorkspaceToolPages.test.tsx
+npm run test:run
+npm run typecheck
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack
+```
+
+人工驗收：
+
+1. 到 `/app/data` 上傳資料。
+2. 到 `/app/models` 或 `/app/finance` 執行分析。
+3. 到 `/app/charts`，應看到剛剛分析產生的真實圖表與解讀。
+
+### 本次驗證結果
+
+- `npm run test:run -- WorkspaceToolPages.test.tsx`：1 個測試檔、3 passed。
+- `npm run test:run`：18 個測試檔、67 passed。
+- `npm run typecheck`：通過。
+- `INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack`：通過。
+- Browser 驗收：`http://127.0.0.1:3012/app/charts` 正常載入，無水平溢位。當前瀏覽器 origin 沒有已上傳資料，因此顯示加入資料空狀態；新增測試已覆蓋「有分析結果時必須顯示圖表」。
+
+### 下一階段要做什麼
+
+- 在圖表工作區加入圖表原始資料下載。
+- 讓圖表工作區支援篩選模型圖表、金融圖表與報告圖表。
+
+## 2026-06-17：修復大型與非標準資料集讀取失敗
+
+### 已完成檔案
+
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/main.py`
+- `backend/app/schemas.py`
+- `backend/tests/test_dataset_analyzer.py`
+- `backend/tests/test_api_hardening.py`
+- `frontend/src/lib/api.ts`
+- `frontend/src/components/AnalysisResult.tsx`
+- `frontend/next.config.js`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 修復 CSV 只支援逗號分隔的問題，現在會自動偵測逗號、分號、Tab 與 pipe 分隔符。
+- 擴充 CSV 編碼支援，除了 UTF-8 / Big5，也支援 CP950 與常見 fallback 編碼。
+- 對欄位數不齊的 CSV 增加安全降級：可讀資料會保留，格式異常列會略過並回傳 `parser_warnings`，不再直接讓整個讀取失敗。
+- 批次上傳中單一檔案若在摘要分析階段失敗，會回傳該檔案的錯誤，不會拖垮整批資料。
+- 多檔合併分析若失敗，已成功讀取的單檔結果仍會保留，合併失敗原因會寫入批次備註。
+- 大資料品質檢查改成受控輪廓樣本：超過 50,000 列時，保留真實列數與欄位數，但昂貴的唯一值、重複列、類別不平衡、異常值檢查會使用前 50,000 列建立輪廓，避免讀取過久。
+- 修復 10MB 前端代理限制根因：本機前端預設直連 FastAPI `http://127.0.0.1:8002`，避免大檔案先經過 Next dev server 被截斷。
+- Next rewrites fallback 已設定 `experimental.proxyClientMaxBodySize = 110mb`，降低未設定直連環境時的大檔代理風險。
+- FastAPI 預設 CORS 加入本機常用前端 port `3010` 至 `3015`，包含目前使用的 `3012`。
+- 前端資料探索區會顯示後端回傳的讀取警告，讓使用者知道哪些資料列被自動降級處理。
+- 前端 API 錯誤萃取支援 FastAPI validation error array，不再只顯示泛化錯誤。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8002
+
+cd frontend
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8002 npm run dev -- --hostname 127.0.0.1 --port 3012
+```
+
+### 如何測試
+
+```bash
+cd backend
+.venv/bin/pytest tests/test_dataset_analyzer.py tests/test_api_hardening.py -q
+.venv/bin/pytest -q
+
+cd frontend
+npm run typecheck
+npm run build -- --webpack
+```
+
+人工驗收：
+
+1. 到 `/app/data` 上傳 CSV、Excel 或 JSON。
+2. 測試分號分隔 CSV 與欄位數不齊的 CSV，應可讀取並顯示讀取警告。
+3. 測試約 17MB CSV，應在合理時間內完成資料輪廓建立。
+
+### 本次驗證結果
+
+- `backend/.venv/bin/pytest tests/test_dataset_analyzer.py tests/test_api_hardening.py -q`：9 passed。
+- `backend/.venv/bin/pytest -q`：43 passed。
+- `frontend/npm run typecheck`：通過。
+- `frontend/npm run build -- --webpack`：通過。
+- `npm run build` 的 Turbopack 模式在 sandbox 內因「binding to a port / Operation not permitted」失敗，改用 webpack build 驗證通過；此問題與本次程式碼修復無關。
+- HTTP API 實測：
+  - 分號 CSV：`HTTP 200`，正確解析為 `player`、`score` 兩欄。
+  - 欄位數不齊 CSV：`HTTP 200`，保留可讀列並回傳 `parser_warnings`。
+  - 17MB CSV：`HTTP 200`，耗時約 `0.24s`，成功讀取 `700,000` 列與 `4` 欄，品質檢查使用 `50,000` 列輪廓樣本。
+- 前端與 CORS 實測：
+  - `curl -I http://127.0.0.1:3012/app/data`：`HTTP 200`。
+  - `OPTIONS /api/datasets/analyze-multiple` 搭配 `Origin: http://127.0.0.1:3012`：`access-control-allow-origin` 正確回傳 `http://127.0.0.1:3012`。
+  - 17MB CSV 搭配 `Origin: http://127.0.0.1:3012` 直連 FastAPI：`HTTP 200`，成功讀取 `700,000` 列與 `4` 欄。
+
+### 下一階段要做什麼
+
+- 針對真實使用者上傳失敗案例，收集失敗檔案的格式、編碼、分隔符與錯誤訊息，持續擴充讀取器。
+- 在前端上傳佇列加入「讀取警告詳情」展開區，讓使用者更容易看到被略過的格式異常列說明。
+
+## 2026-06-17：圖表頁改為專有名詞解釋
+
+### 已完成檔案
+
+- `frontend/src/components/WorkspaceToolPages.tsx`
+- `frontend/src/components/AppShell.tsx`
+- `frontend/src/components/WorkspaceDashboard.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/__tests__/WorkspaceToolPages.test.tsx`
+- `frontend/src/components/__tests__/AppShell.test.tsx`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 依使用者回饋，移除 `/app/charts` 集中顯示圖表的設計，避免和模型頁、金融頁的圖表比較區重複。
+- `/app/charts` 改成「專有名詞解釋 / 分析字典」頁。
+- 工作區導覽文字從「圖表」改為「名詞」，頂部頁名從「圖表工作區」改為「專有名詞」。
+- 名詞頁會優先使用目前資料、模型、金融分析回傳的 `terms`，包含白話說明、判讀方式、限制、技術定義與公式。
+- 若目前 workspace 是舊資料、沒有 `terms`，會顯示常用模型指標字典，不會冒充分析結果。
+- 工作區總覽中原本連到圖表頁的模型/金融圖表入口，已改回連到模型頁與金融頁。
+- 圖表區右側解釋文字加大：標題由 11px 提升到 13px，說明文字由 12px 提升到 14px，行距同步提高。
+
+### 如何啟動
+
+```bash
+cd frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run start -- --hostname 127.0.0.1 --port 3012
+```
+
+### 如何測試
+
+```bash
+cd frontend
+npm run test:run -- WorkspaceToolPages.test.tsx AppShell.test.tsx WorkspaceInsightGrid.test.tsx
+npm run test:run
+npm run typecheck
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack
+```
+
+人工驗收：
+
+1. 開啟 `/app/charts`。
+2. 頁面應顯示「專有名詞解釋」，不應顯示「已產生的分析圖表」。
+3. 工作區導覽應顯示「名詞」。
+4. 模型頁與金融頁的圖表解釋文字應比之前更大、更容易閱讀。
+
+### 本次驗證結果
+
+- `npm run test:run -- WorkspaceToolPages.test.tsx AppShell.test.tsx WorkspaceInsightGrid.test.tsx`：3 個測試檔、8 passed。
+- `npm run test:run`：18 個測試檔、67 passed。
+- `npm run typecheck`：通過。
+- `INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack`：通過。
+- Browser 驗收：`http://127.0.0.1:3012/app/charts` 顯示「專有名詞解釋」，導覽為「名詞」，主內容 `img` 數量為 0，無水平溢位。

@@ -18,6 +18,7 @@ venv/
 .env.local
 frontend/.env.local
 backend/.env
+.local/
 .superpowers/
 generated_outputs/**
 !generated_outputs/

@@ -41,18 +41,28 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
-from app.services.dataset_analyzer import merge_dataframes, read_uploaded_dataframe
+from app.services.artifact_access import create_artifact_url
+from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes, read_uploaded_dataframe
+from app.services.insight_narrative import build_model_brief, enrich_model_option
+from app.services.analysis_progress import (
+    CancelCheck,
+    ProgressCallback,
+    emit_progress,
+    ensure_not_cancelled,
+)
 
-CHART_DIR = REPO_ROOT / "generated_outputs" / "charts"
-DATA_DIR = REPO_ROOT / "generated_outputs" / "data"
-MODEL_DIR = REPO_ROOT / "generated_outputs" / "models"
-REPORT_DIR = REPO_ROOT / "generated_outputs" / "reports"
+GENERATED_OUTPUTS_DIR = REPO_ROOT / "generated_outputs"
+CHART_DIR = GENERATED_OUTPUTS_DIR / "charts"
+DATA_DIR = GENERATED_OUTPUTS_DIR / "data"
+MODEL_DIR = GENERATED_OUTPUTS_DIR / "models"
+REPORT_DIR = GENERATED_OUTPUTS_DIR / "reports"
 MODEL_RANDOM_STATE = 42
 ANALYSIS_MODES = {"auto", "regression", "classification"}
 MODEL_SELECTION_MODES = {"auto", "custom"}
@@ -164,7 +174,11 @@ async def run_uploaded_model_analysis(
     model_selection_mode: str = "auto",
     selected_models: str = "auto",
     automl_mode: str = "off",
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    emit_progress(progress_callback, "reading_data", "正在讀取資料。")
+    ensure_not_cancelled(should_cancel)
     df, file_name = await read_uploaded_dataframe(file)
     return run_model_analysis(
         df=df,
@@ -175,6 +189,8 @@ async def run_uploaded_model_analysis(
         model_selection_mode=model_selection_mode,
         selected_models=selected_models,
         automl_mode=automl_mode,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
 
 
@@ -186,6 +202,8 @@ async def run_uploaded_merged_model_analysis(
     model_selection_mode: str = "auto",
     selected_models: str = "auto",
     automl_mode: str = "off",
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
     if len(files) < 2:
         raise HTTPException(status_code=400, detail="合併模型分析至少需要 2 個檔案。")
@@ -193,7 +211,15 @@ async def run_uploaded_merged_model_analysis(
     loaded_datasets: list[tuple[str, pd.DataFrame]] = []
     skipped_files: list[str] = []
 
-    for file in files:
+    for index, file in enumerate(files):
+        ensure_not_cancelled(should_cancel)
+        emit_progress(
+            progress_callback,
+            "reading_data",
+            "正在讀取合併資料來源。",
+            index,
+            len(files),
+        )
         file_name = file.filename or "未命名檔案"
         try:
             df, parsed_file_name = await read_uploaded_dataframe(file)
@@ -217,6 +243,8 @@ async def run_uploaded_merged_model_analysis(
         model_selection_mode=model_selection_mode,
         selected_models=selected_models,
         automl_mode=automl_mode,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
     result["notes"] = [
         *merge_metadata["merge_notes"],
@@ -235,7 +263,10 @@ def run_model_analysis(
     model_selection_mode: str = "auto",
     selected_models: str = "auto",
     automl_mode: str = "off",
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    ensure_not_cancelled(should_cancel)
     requested_mode = _normalize_analysis_mode(analysis_mode)
     requested_chart_types = _normalize_chart_types(chart_types)
     requested_model_selection_mode = _normalize_model_selection_mode(model_selection_mode)
@@ -255,6 +286,7 @@ def run_model_analysis(
     if x_raw.empty:
         raise HTTPException(status_code=400, detail="除了目標欄位外沒有可用特徵。")
 
+    emit_progress(progress_callback, "detecting_problem", "正在判斷問題類型。")
     inferred_problem_type = _infer_problem_type(y_raw)
     problem_type = inferred_problem_type if requested_mode == "auto" else requested_mode
     notes: list[str] = []
@@ -276,16 +308,28 @@ def run_model_analysis(
     if len(working_df) < 5:
         raise HTTPException(status_code=400, detail="資料列太少，至少需要 5 筆有效資料才能訓練模型。")
 
+    stratify_target = None
+    if problem_type == "classification":
+        class_counts = pd.Series(y).value_counts()
+        if len(class_counts) >= 2 and int(class_counts.min()) >= 2:
+            stratify_target = y
+            notes.append("分類任務已使用 stratified train/test split，降低類別分布偏移。")
+        else:
+            notes.append("分類任務類別樣本數不足，無法安全使用 stratified split，已改用固定 random split。")
+
     x_train, x_test, y_train, y_test = train_test_split(
         x_raw,
         y,
         test_size=0.25,
         random_state=MODEL_RANDOM_STATE,
+        stratify=stratify_target,
     )
 
     if len(x_train) < 2 or len(x_test) < 1:
         raise HTTPException(status_code=400, detail="資料切分後訓練或測試資料不足。")
 
+    ensure_not_cancelled(should_cancel)
+    emit_progress(progress_callback, "selecting_models", "正在選擇候選模型。")
     model_specs = _select_model_specs(
         model_selection_mode=requested_model_selection_mode,
         selected_models=selected_models,
@@ -302,7 +346,26 @@ def run_model_analysis(
     fitted_models: dict[str, Pipeline] = {}
     predictions_by_model: dict[str, np.ndarray] = {}
 
-    for spec in model_specs:
+    baseline_result, baseline_predictions = _fit_baseline_model(
+        x_train=x_train,
+        x_test=x_test,
+        y_train=y_train,
+        y_test=y_test,
+        problem_type=problem_type,
+    )
+    model_results.append(baseline_result)
+    predictions_by_model[str(baseline_result["model_name"])] = baseline_predictions
+    notes.append("已加入 baseline model，作為判斷候選模型是否真的改善的比較基準。")
+
+    for index, spec in enumerate(model_specs):
+        ensure_not_cancelled(should_cancel)
+        emit_progress(
+            progress_callback,
+            "training_models",
+            f"正在訓練模型：{spec.label}",
+            index,
+            len(model_specs),
+        )
         pipeline = Pipeline(
             steps=[
                 ("preprocess", _build_preprocessor(x_raw)),
@@ -331,7 +394,10 @@ def run_model_analysis(
             "training_time_seconds": round(training_time_seconds, 6),
             "automl_best_params": best_params,
             "model_path": str(model_path.relative_to(REPO_ROOT)),
-            "model_url": f"/generated_outputs/models/{model_path.name}",
+            "model_url": create_artifact_url(
+                model_path,
+                root=GENERATED_OUTPUTS_DIR,
+            ),
         }
 
         if problem_type == "classification":
@@ -348,7 +414,22 @@ def run_model_analysis(
         fitted_models[spec.label] = pipeline
         predictions_by_model[spec.label] = predictions
         model_results.append(result_payload)
+        emit_progress(
+            progress_callback,
+            "training_models",
+            f"已完成模型：{spec.label}",
+            index + 1,
+            len(model_specs),
+        )
 
+    ensure_not_cancelled(should_cancel)
+    emit_progress(
+        progress_callback,
+        "evaluating_models",
+        "正在比較模型結果。",
+        len(model_results),
+        len(model_specs) + 1,
+    )
     selected_chart_types = _select_chart_types(
         requested_chart_types=requested_chart_types,
         problem_type=problem_type,
@@ -369,6 +450,14 @@ def run_model_analysis(
     best_predictions = predictions_by_model[best_model_name]
     feature_model_name, feature_model = _select_feature_model(fitted_models, model_results)
 
+    ensure_not_cancelled(should_cancel)
+    emit_progress(
+        progress_callback,
+        "generating_charts",
+        "正在產生模型圖表。",
+        0,
+        len(selected_chart_types),
+    )
     charts = _create_selected_charts(
         selected_chart_types=selected_chart_types,
         model_results=model_results,
@@ -387,11 +476,17 @@ def run_model_analysis(
             "此版本依需求顯示 R2、RMSE、MAE；分類目標欄位會先轉成數值標籤後計算這些指標。"
         )
 
+    ensure_not_cancelled(should_cancel)
+    emit_progress(
+        progress_callback,
+        "building_outputs",
+        "正在保存模型結果與清理後資料。",
+    )
     primary_chart = charts[0] if charts else None
     model_results_path = _save_model_results(model_results)
     cleaned_dataset_path = _save_cleaned_dataset(working_df, file_name)
 
-    return {
+    result = {
         "file_name": file_name,
         "target_column": target_column,
         "analysis_mode": requested_mode,
@@ -405,15 +500,29 @@ def run_model_analysis(
         "available_models": available_models,
         "recommended_models": recommended_models,
         "model_results_path": str(model_results_path.relative_to(REPO_ROOT)),
-        "model_results_url": f"/generated_outputs/reports/{model_results_path.name}",
+        "model_results_url": create_artifact_url(
+            model_results_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
         "cleaned_dataset_path": str(cleaned_dataset_path.relative_to(REPO_ROOT)),
-        "cleaned_dataset_url": f"/generated_outputs/data/{cleaned_dataset_path.name}",
+        "cleaned_dataset_url": create_artifact_url(
+            cleaned_dataset_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
         "chart_path": primary_chart["chart_path"] if primary_chart else "",
         "chart_url": primary_chart["chart_url"] if primary_chart else "",
         "charts": charts,
         "selected_chart_types": selected_chart_types,
         "notes": notes,
     }
+    dataset_summary = analyze_dataframe(working_df, file_name=file_name)
+    result.update(
+        build_model_brief(
+            dataset_summary=dataset_summary,
+            model_analysis=result,
+        )
+    )
+    return result
 
 
 def _normalize_analysis_mode(analysis_mode: str) -> str:
@@ -468,22 +577,22 @@ def _normalize_chart_types(chart_types: str) -> list[str]:
     return list(dict.fromkeys(parsed))
 
 
-def get_model_options(problem_type: str | None = None) -> list[dict[str, str]]:
+def get_model_options(problem_type: str | None = None) -> list[dict[str, Any]]:
     catalog = _model_catalog()
     if problem_type:
         catalog = [spec for spec in catalog if spec.problem_type == problem_type]
     return [_model_option_payload(spec) for spec in catalog]
 
 
-def _model_option_payload(spec: ModelSpec) -> dict[str, str]:
-    return {
+def _model_option_payload(spec: ModelSpec) -> dict[str, Any]:
+    return enrich_model_option({
         "key": spec.key,
         "label": spec.label,
         "problem_type": spec.problem_type,
         "family": spec.family,
         "description": spec.description,
         "complexity": spec.complexity,
-    }
+    })
 
 
 def _model_catalog() -> list[ModelSpec]:
@@ -1020,6 +1129,7 @@ def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
                 Pipeline(
                     steps=[
                         ("imputer", SimpleImputer(strategy="most_frequent")),
+                        ("to_string", FunctionTransformer(_to_string_array)),
                         ("encoder", OneHotEncoder(handle_unknown="ignore")),
                     ]
                 ),
@@ -1028,6 +1138,10 @@ def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
         )
 
     return ColumnTransformer(transformers=transformers, remainder="drop")
+
+
+def _to_string_array(values: Any) -> np.ndarray:
+    return np.asarray(values).astype(str)
 
 
 def _fit_pipeline(
@@ -1128,6 +1242,58 @@ def _save_cleaned_dataset(working_df: pd.DataFrame, file_name: str) -> Path:
     return cleaned_dataset_path
 
 
+def _fit_baseline_model(
+    *,
+    x_train: pd.DataFrame,
+    x_test: pd.DataFrame,
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+    problem_type: str,
+) -> tuple[dict[str, Any], np.ndarray]:
+    started = perf_counter()
+    if problem_type == "classification":
+        estimator = DummyClassifier(strategy="most_frequent")
+        model_key = "baseline_classifier"
+        model_name = "Baseline 分類"
+        family = "baseline"
+    else:
+        estimator = DummyRegressor(strategy="median")
+        model_key = "baseline_regressor"
+        model_name = "Baseline 回歸"
+        family = "baseline"
+
+    estimator.fit(x_train, y_train)
+    predictions = np.asarray(estimator.predict(x_test), dtype=float)
+    training_time_seconds = perf_counter() - started
+    model_path = _save_trained_model(estimator, model_key)
+    payload: dict[str, Any] = {
+        "model_key": model_key,
+        "model_name": model_name,
+        "model_family": family,
+        "r2": round(float(r2_score(y_test, predictions)), 6),
+        "rmse": round(float(_root_mean_squared_error(y_test, predictions)), 6),
+        "mae": round(float(mean_absolute_error(y_test, predictions)), 6),
+        "training_time_seconds": round(training_time_seconds, 6),
+        "automl_best_params": {},
+        "model_path": str(model_path.relative_to(REPO_ROOT)),
+        "model_url": create_artifact_url(
+            model_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
+    }
+    if problem_type == "classification":
+        rounded_predictions = np.rint(predictions).astype(int)
+        payload["accuracy"] = round(float(accuracy_score(y_test, rounded_predictions)), 6)
+        payload["f1_score"] = round(
+            float(f1_score(y_test, rounded_predictions, average="weighted", zero_division=0)),
+            6,
+        )
+    else:
+        payload["accuracy"] = None
+        payload["f1_score"] = None
+    return payload, predictions
+
+
 def _root_mean_squared_error(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
@@ -1208,7 +1374,10 @@ def _chart_payload(chart_type: str, chart_path: Path) -> dict[str, str]:
         "chart_type": chart_type,
         "title": CHART_TITLES[chart_type],
         "chart_path": str(chart_path.relative_to(REPO_ROOT)),
-        "chart_url": f"/generated_outputs/charts/{chart_path.name}",
+        "chart_url": create_artifact_url(
+            chart_path,
+            root=GENERATED_OUTPUTS_DIR,
+        ),
     }
 
 

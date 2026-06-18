@@ -4,15 +4,14 @@ const internalApiBaseUrl =
 
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    proxyClientMaxBodySize: "110mb"
+  },
   async rewrites() {
     return [
       {
         source: "/api/:path*",
         destination: `${internalApiBaseUrl}/api/:path*`
-      },
-      {
-        source: "/generated_outputs/:path*",
-        destination: `${internalApiBaseUrl}/generated_outputs/:path*`
       },
       {
         source: "/health",

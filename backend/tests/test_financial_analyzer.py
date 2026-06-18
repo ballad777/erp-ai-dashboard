@@ -31,6 +31,11 @@ def test_run_financial_analysis_detects_columns_and_creates_outputs() -> None:
     assert result["var_99"] is not None
     assert len(result["forecast_points"]) == 5
     assert len(result["charts"]) == 4
+    assert result["plain_summary"]["headline"]
+    assert result["forecast_reliability"]["level"] in {"medium", "low"}
+    assert result["forecast_reliability"]["should_show_warning"] is True
+    assert any(term["term"] == "RSI" for term in result["terms"])
+    assert result["research_details"]["method"]
     assert (REPO_ROOT / Path(result["indicator_path"])).exists()
     for chart in result["charts"]:
         assert Path(chart["chart_path"]).suffix == ".png"
@@ -50,12 +55,16 @@ def test_financial_analysis_api_returns_real_chart_paths() -> None:
     payload = response.json()
     assert payload["date_column"] == "date"
     assert payload["price_column"] == "close"
-    assert payload["indicator_url"].endswith(".csv")
+    assert Path(payload["indicator_path"]).suffix == ".csv"
+    assert payload["indicator_url"].startswith("/api/artifacts/")
     assert payload["var_95"] is not None
     assert len(payload["forecast_points"]) == 5
     assert len(payload["charts"]) == 4
+    assert payload["forecast_reliability"]["forecast_label"] == "基準情境估計"
+    assert payload["plain_summary"]["risk"]
     for chart in payload["charts"]:
-        assert chart["chart_url"].endswith(".png")
+        assert Path(chart["chart_path"]).suffix == ".png"
+        assert chart["chart_url"].startswith("/api/artifacts/")
         assert (REPO_ROOT / Path(chart["chart_path"])).exists()
 
 

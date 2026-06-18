@@ -1,8 +1,14 @@
 # 智能金融資料分析
 
-智能金融資料分析是一個智慧金融與資料分析平台。使用者可以上傳 CSV / Excel 資料集，逐步完成資料摘要、多模型分析、圖表輸出、程式碼生成、金融分析與完整輸出套件。
+智能金融資料分析是一個智慧金融與資料分析平台。使用者可以上傳 CSV / Excel / JSON 資料集，逐步完成資料摘要、多模型分析、圖表輸出、程式碼生成、金融分析與完整輸出套件。
 
 目前狀態：除一鍵 ZIP 套件外，計畫書主要功能已補齊可執行版本。前端可整批上傳多個資料集、顯示後端真實摘要、自動建立合併資料集摘要、選擇目標欄位、選擇分析模式、手動或自動選擇模型與圖表，並產出真實 PNG 圖表、可下載程式碼檔案、Notebook、trained model、模型結果 Excel、Word 分析報告與金融指標 CSV。
+
+> 本專案目前僅適合私人展示、封閉測試與非敏感樣本資料。請勿上傳個資、醫療、財務帳戶或其他敏感資料，也不要開放匿名公眾上傳。
+
+上傳限制：CSV / XLSX / XLS / JSON 單檔最多 25 MB，單次最多 20 個檔案，批次總容量最多 100 MB。前端會先檢查，後端仍會再次驗證。
+
+最新現況請先讀 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。舊稽核與進度文件保留歷史脈絡，但 `CURRENT_STATUS.md` 代表目前可執行能力與尚未完成項目。
 
 ## 技術架構
 
@@ -12,7 +18,32 @@
 - 模型訓練：scikit-learn、XGBoost、LightGBM
 - 圖表輸出：matplotlib
 - 報告輸出：python-docx
+- 本機持久化：SQLite (`.local/finai.sqlite3`)
+- 正式資料庫 schema：PostgreSQL DDL (`backend/database/postgres_schema.sql`)
 - 輸出資料夾：`generated_outputs/`
+
+## 產品資訊架構
+
+- `/`：品牌首頁，說明產品價值、真實分析原則與完整分析旅程。
+- `/app`：分析總覽，依目前真實結果整理重點與建議下一步。
+- `/app/data`：CSV / Excel / JSON 多檔上傳、個別讀取、合併摘要、資料品質檢查與資料探索。
+- `/app/models`：自動／手動模型選擇、AutoML、模型比較、圖表與程式碼預覽。
+- `/app/charts`：集中整理目前資料來源與真實分析產生的圖表；沒有結果時不顯示示範圖。
+- `/app/finance`：日期與價格欄位偵測、金融指標、風險、圖表與預測。
+- `/app/reports`：代理分析、管理摘要與 Word 報告輸出。
+- `/en`、`/en/app/*`：對應的英文介面；使用者檔名、欄位名稱與程式碼維持原文。
+
+首頁與工作區共用同一套設計 tokens。首頁使用固定兩行的 Data Lens Hero；工作區採 icon rail、漸進式洞察層級與脈絡詳情面板，先顯示結論、依據與下一步，再按需展開完整表格。
+
+工作區提供十套語意配色：晨霧藍綠、Atlas、Iris、Clay、Sage、Frost、Graphite、Amber、Deep Sea 與 Midnight。點選配色後會立即套用並保存至 `localStorage` 的 `finai-product-theme-v1`；深色配色也會同步更新既有表格、表單與分析面板。
+
+WorkspaceProvider 會使用 IndexedDB 保存目前瀏覽器中的本機檔案、資料摘要、分析結果、程式碼與資料來源。在同一個瀏覽器中切換 route、返回首頁或重新整理後，工作區會恢復已保存內容；使用「清空工作區」才會刪除。IndexedDB 不會同步到其他瀏覽器、裝置或使用者帳號，也不是伺服器端專案儲存。
+
+分析產物目前使用短效 HMAC capability URL 下載，直接 `/generated_outputs/*` 靜態路徑已移除。當 API 透過 run context 產生 artifact 時，token 會綁定 `artifact_id`、`run_id`、`project_id` 與 `user_id`，下載也會寫入 audit log。這仍只是封閉測試治理層，不等同正式登入、多租戶授權或企業級權限系統。
+
+主要 API 現在會回傳 `run_id`、`dataset_id` 與 `run_manifest`。Manifest 會記錄輸入檔 SHA-256、參數、模型結果與 artifact 清單，用來支撐後續可重現分析、報告與稽核。
+
+模型、金融、代理與報告流程使用後端工作 API。前端顯示的階段、模型完成數與耗時來自真實後端狀態，可在目前步驟完成後協作取消，不是固定時間的假進度。
 
 ## 專案結構
 
@@ -20,6 +51,7 @@
 .
 ├── backend/
 │   ├── app/
+│   │   ├── database/
 │   │   ├── main.py
 │   │   ├── schemas.py
 │   │   └── services/
@@ -36,6 +68,8 @@
 │   │   ├── test_financial_analyzer.py
 │   │   └── test_model_runner.py
 │   ├── pytest.ini
+│   ├── database/
+│   │   └── postgres_schema.sql
 │   └── requirements.txt
 ├── frontend/
 │   ├── public/
@@ -58,6 +92,7 @@
 │   ├── data/
 │   ├── models/
 │   └── reports/
+├── CURRENT_STATUS.md
 └── PROGRESS.md
 ```
 
@@ -66,7 +101,7 @@
 建議版本：
 
 - Python 3.11 以上
-- Node.js 20.9.0 以上
+- Node.js 22.13.0 以上
 - npm 10 以上
 
 ### 啟動後端
@@ -109,10 +144,23 @@ npm run dev
 http://localhost:3000
 ```
 
+使用已完成的 production build 啟動在 3010 埠：
+
+```bash
+cd frontend
+npm run build
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+```text
+http://127.0.0.1:3010
+```
+
 前端品質檢查：
 
 ```bash
 cd frontend
+npm run test:run
 npm run typecheck
 npm run build
 ```
@@ -123,7 +171,7 @@ npm run build
 /api/*
 ```
 
-`frontend/next.config.js` 會把 `/api/*`、`/generated_outputs/*` 與 `/health` 代理到後端，預設後端位址為：
+`frontend/next.config.js` 會把 `/api/*` 與 `/health` 代理到後端，預設後端位址為：
 
 ```text
 http://127.0.0.1:8000
@@ -170,11 +218,11 @@ npx --yes localtunnel --port 3000
 
 取得的 `https://*.loca.lt` 網址即可分享給其他人測試。這是暫時公開網址，終端機關閉後網址就會失效。
 
-### 正式雲端部署
+### 封閉測試雲端部署
 
-若要讓使用者在你電腦關機後仍可使用，不能只用 GitHub Pages，因為本專案需要執行 FastAPI、Python 模型、檔案上傳與輸出檔案。
+若要在你電腦關機後繼續進行私人展示或封閉測試，不能只用 GitHub Pages，因為本專案需要執行 FastAPI、Python 模型、檔案上傳與輸出檔案。
 
-目前已提供 GitHub + Render 的 Docker 部署設定：
+目前提供 GitHub + Render 的 Docker 封閉測試設定：
 
 - `Dockerfile`
 - `.dockerignore`
@@ -182,7 +230,7 @@ npx --yes localtunnel --port 3000
 - `render.yaml`
 - `DEPLOYMENT.md`
 
-將專案推到 GitHub 後，可在 Render 使用 Blueprint 讀取 `render.yaml`，建立單一 Docker Web Service。部署完成後，Render 會提供固定公開網址，例如：
+將專案推到 GitHub 後，可在 Render 使用 Blueprint 讀取 `render.yaml`，建立單一 Docker Web Service。Render 會提供固定網址，但目前架構不適合公開匿名上傳或任何敏感資料：
 
 ```text
 https://smart-finance-analysis.onrender.com
@@ -196,14 +244,28 @@ DEPLOYMENT.md
 
 ## 介面系統與互動品質
 
-- 保留首頁、上傳工作台、分析結果與報告流程的既有資訊架構。
+- 產品採用品牌首頁與六頁工作區：`/` 品牌首頁、`/app` 總覽、`/app/data` 資料、`/app/models` 模型、`/app/charts` 圖表、`/app/finance` 金融、`/app/reports` 報告。
+- 總覽頁只顯示目前資料品質、分析進度與建議下一步，不使用固定示範數字。
+- 全域資料來源選擇器可在單一檔案與合併資料集之間切換，切換路由不會清除目前分頁的分析狀態。
 - 使用 CSS variables 統一色彩、間距、陰影、圓角與 160 至 440ms 動態節奏。
+- 十套配色使用同一組語意 token，支援點選即時套用、首屏同步初始化與本機持久化。
 - 主要操作採用 shadcn/ui primitives，圖示統一使用 Lucide。
-- 背景光場只使用低透明度、低位移的 transform / opacity 動畫，不穿過主要閱讀區。
-- 首頁提供 scroll reveal、低強度游標感應光暈與可中斷頁面轉場。
-- 工作台提供 loading skeleton、spinner、通知進出、成功、警告與錯誤回饋。
+- 桌面工作區使用 72px icon rail；主要閱讀區使用實色高對比表面，背景光場不穿過文字區。
+- 資料、模型、金融、報告的真實 API 請求都有分段 loading、spinner、成功、警告與錯誤回饋。
+- 分析結果採漸進揭露：先顯示最佳模型、金融訊號或管理摘要，再切換圖表，完整表格與代理紀錄按需展開。
+- 模型成果可開啟側邊詳情面板；手機會轉為底部抽屜，Escape、背景點擊與焦點回復都有處理。
+- 資料與圖表頁籤支援方向鍵、Home、End 與 `focus-visible`。
 - 支援 `prefers-reduced-motion`、鍵盤 `focus-visible`、觸控裝置與系統深色模式。
-- 桌機、平板、手機皆使用流動式版面；側欄會在小尺寸收合，主要操作會自動滿寬。
+- 桌機使用固定 icon rail；平板與手機切換為底部導覽，表格與圖表保持在可捲動容器內。
+- 繁中為預設語言，Header 與工作區設定可切換英文，並保留目前所在功能頁。
+
+### 無障礙與降級
+
+- 所有 icon-only 控制都有可讀名稱，配色選擇器使用 `radiogroup` / `radio` 語意。
+- 所有主要操作支援鍵盤、`focus-visible`、Escape 關閉與至少 44px 的手機觸控區。
+- `prefers-reduced-motion` 會停用資料透鏡追蹤、面板位移與非必要動畫。
+- 圖表工作區只整理真實模型或金融分析輸出；尚未產生圖表時只顯示空狀態，不會製造假圖表。
+- 可選介面音效預設關閉，只在長時間工作成功或錯誤時播放簡短回饋。
 
 ## 已完成功能
 
@@ -299,7 +361,7 @@ generated_outputs/charts/
   - 圖表生成
 - 後端會把本次使用的資料另存到 `generated_outputs/data/`，讓生成的程式碼可在專案內直接執行。
 - 單檔與合併資料都支援程式碼生成。
-- 前端會在頁面內直接顯示本次生成的 Python 程式碼，並可切換 Notebook 預覽；下載功能仍保留。
+- 前端會在頁面內以可複製、有行號的程式碼面板顯示本次生成的 Python 程式碼，並可切換 Notebook 預覽；下載功能仍保留。
 
 ### 第五階段：金融分析模式
 
@@ -344,30 +406,30 @@ generated_outputs/charts/
   - `POST /api/reports/generate`
   - `POST /api/reports/generate-merged`
 - 報告會輸出到 `generated_outputs/reports/`。
-- 報告內容包含資料摘要、Agent 執行紀錄、模型比較、金融分析與圖表。
+- 報告中心與 API 會回傳 `decision_brief`，包含執行摘要、最重要發現、需要注意、成長機會/金融訊號、建議行動、模型推薦原因與逐圖解讀。
+- 每張圖表都會附上圖表說明、關鍵發現、代表意義、趨勢解讀、異常說明、商業洞察與決策建議。
+- Word 報告升級為顧問式章節：分析目的、分析方法、分析結果、結果解讀、商業意義、建議行動、風險與限制、AI 結論摘要。
+- 若未設定 `OPENAI_API_KEY`，報告仍會使用本機規則產生可重現解讀，並明確標示 `local_rule_based`。
 - ZIP 套件依使用者要求本階段不實作。
 
 ### 介面風格
 
-- 網站已調整為淺色科技新創產品風格，降低霓虹裝飾，優先讓流程一眼可讀。
+- 網站已調整為 Linear 風格的高對比 AI SaaS 工作區，優先讓流程與結論一眼可讀。
 - 保留原有主色系：`ink`、`brand`、`navy`、`amber`。
-- 使用白底、玻璃感面板、柔和藍綠漸層、清晰字體與 hover glow 按鈕。
-- 新增 Apple / iOS 風格的產品層次：
-  - 首頁以「讓資料說話，讓決策更智慧」與五步流程呈現資料分析路徑。
-  - 上傳頁改為工作台布局：左側流程導覽、中央上傳、流程進度與分析結果。
-  - 更細緻的玻璃面板、焦點狀態、hover 狀態、進度狀態與手機排版。
-  - 收斂全站標題、卡片與控制項字級，提升資訊密度與精緻感。
-  - 使用低飽和藍綠灰配色與三層陰影系統，降低霓虹感並加強前後景深度。
-  - 判斷依據與合併說明支援平滑展開。
-  - 上傳、讀取、移除、清空與錯誤狀態會顯示由真實操作觸發的浮動通知。
-  - 首頁產品預覽不使用假分析數字，初始狀態只呈現平台能力與等待資料匯入流程。
+- 使用深色定位層、白色工作面與低飽和藍綠狀態色，避免霓虹、過度玻璃與卡片牆。
+- 首頁是實際 Dashboard，顯示真實資料品質、來源清單、分析進度與下一步。
+- 上傳頁只負責多檔資料管理與探索，不再同頁堆疊模型、金融、報告與程式碼。
+- 模型頁改為聚焦流程台：先確認目標欄位、分析模式與模型策略，再執行真實後端模型比較；結果先顯示最佳模型、關鍵指標與建議下一步。
+- 金融頁先顯示趨勢與風險；報告頁先顯示管理摘要。
+- 完整比較表、預測表、AutoML、圖表設定與代理執行紀錄使用可展開區域。
+- 上傳、讀取、移除、清空、分析、程式碼生成與報告生成都有真實狀態回饋。
 
 ### 工作階段保留
 
-- 上傳檔案、資料摘要、模型結果、金融結果、報告與程式碼預覽會保留在目前瀏覽器分頁的工作階段記憶體中。
-- 從工作台返回首頁再回到上傳頁，不需要重新上傳或重新執行已完成的分析。
-- 按下工作台的「清空」後，才會移除目前分頁保存的檔案與分析狀態。
-- 重新整理或關閉瀏覽器分頁後，瀏覽器基於安全限制不會自動重新取得本機檔案，屆時需要重新選擇檔案。
+- WorkspaceProvider 會透過 IndexedDB 保存上傳檔案、資料摘要、模型結果、金融結果、報告與程式碼預覽。
+- 在同一個瀏覽器中切換 route、返回首頁或重新整理後，工作區會恢復已保存的檔案與分析狀態。
+- IndexedDB 不會同步到其他瀏覽器、裝置或使用者帳號，也不是伺服器端專案儲存。
+- 按下工作台的「清空工作區」後，才會刪除這個瀏覽器中已保存的工作區內容。
 
 ## 測試流程
 
@@ -378,17 +440,17 @@ generated_outputs/charts/
 3. 點選「上傳資料」。
 4. 加入 `sample_datasets/housing_sample.csv` 與 `sample_datasets/stock_prices_sample.csv`。
 5. 點選「讀取全部檔案」。
-6. 確認頁面顯示兩個檔案的獨立摘要，以及「智慧合併分析」區塊。
-7. 在「合併資料模型分析」選擇建議目標欄位或自行選欄位。
+6. 確認資料來源選擇器可切換兩個檔案與合併資料集，資料摘要會跟著改變。
+7. 進入 `/models`，選擇建議目標欄位或自行選欄位。
 8. 選擇「自動選擇」分析模式與「自動選最適合圖表」。
 9. 點選「執行模型分析」。
-10. 確認頁面顯示模型比較表與多張後端產生的圖表。
+10. 確認頁面先顯示最佳模型與關鍵指標，可切換後端產生的圖表並展開完整比較表。
 11. 在模型策略中切換「自動推薦模型」或「手動選擇模型」，確認模型數量會依選擇改變。
-12. 在 `stock_prices_sample.csv` 或合併資料區塊點選「執行金融分析」。
+12. 進入 `/finance`，選擇 `stock_prices_sample.csv` 後點選「執行金融分析」。
 13. 確認頁面顯示金融摘要、MA / 報酬率 / 波動率 / RSI / MACD / VaR / 時間序列預測圖與指標 CSV 下載。
-14. 在「AI 協作分析與報告」執行 AI 分析。
+14. 進入 `/reports`，執行 AI 分析。
 15. 點選「生成 Word 報告」，下載 `analysis_report.docx`。
-16. 在「AI 程式碼生成」選擇主要模型。
+16. 回到 `/models` 的分析結果，在「AI 程式碼生成」選擇主要模型。
 17. 點選「生成程式碼」。
 18. 直接在頁面內檢查生成的 Python / Notebook 內容，也可下載 `generated_code.py` 與 `notebook.ipynb`。
 
@@ -551,7 +613,7 @@ npm audit --audit-level=moderate
 
 本專案目前的「AI 智能分析」包含本機機器學習判斷、AutoML 推薦、多代理工作流與可選 LLM 摘要。若未設定 `OPENAI_API_KEY`，系統會明確回傳 `local_rule_based`，不會假裝已呼叫外部 LLM。
 
-2026-06-10 以 FastAPI TestClient 對真實 sample datasets 做過一次稽核：
+2026-06-14 重新以後端自動化測試與 FastAPI TestClient 對真實 sample datasets 完成稽核：
 
 - `housing_sample.csv`，target=`price_usd`：自動判斷為回歸，推薦並執行 `ridge`、`lasso`、`elastic_net`、`random_forest`、`gradient_boosting_regressor`、`xgboost_regressor`、`knn_regressor`。
 - `housing_sample.csv`，target=`near_mrt`：自動判斷為分類，推薦並執行 `logistic_regression`、`decision_tree_classifier`、`random_forest_classifier`、`gradient_boosting_classifier`、`xgboost_classifier`、`knn_classifier`。
@@ -560,6 +622,50 @@ npm audit --audit-level=moderate
 - Multi-Agent API 回傳代理步驟：資料理解代理、模型分析代理、金融分析代理、視覺化代理、報告代理。
 
 這代表目前模型不是固定四種硬跑，也不是前端假資料；結果會根據資料欄位、target 類型、列數、特徵數、缺失比例與使用者選項重新判斷。
+
+## 一般人可讀與研究者深挖模式
+
+本專案依據 `docs/strategy/2026-06-17-layperson-and-researcher-improvement-plan.md` 增加雙層分析體驗。核心原則是：同一份真實分析結果，同時提供「一般人看得懂的結論」與「研究者可追溯的細節」。
+
+### 閱讀深度
+
+工作區設定提供三種閱讀深度：
+
+- `簡明`：優先顯示一句話結論、發生了什麼、風險與下一步。
+- `標準`：加入支撐證據、圖表讀法與主要限制。
+- `研究`：顯示技術定義、公式、方法、參數、假設、限制與可重現資產。
+
+閱讀深度會存在瀏覽器本機，重新整理後仍會保留偏好。
+
+### API 新增解釋欄位
+
+資料、模型與金融分析結果會回傳一致的解釋欄位：
+
+- `plain_summary`：一句話結論、發生什麼、為什麼重要、風險、下一步。
+- `confidence`：可信度等級、原因與阻礙因素。
+- `evidence`：系統做出判斷的支撐證據。
+- `terms`：指標白話說明、技術定義、公式、判讀方式與限制。
+- `research_details`：方法、假設、參數、限制與可重現資產。
+- `chart_stories`：每張圖表的說明、關鍵發現、代表意義、不能證明什麼與建議行動。
+
+金融分析另外回傳：
+
+- `forecast_reliability`：時間序列基準情境估計的可信度、原因、建議行動與警告旗標。
+
+### 指標字典
+
+後端 `backend/app/services/metric_glossary.py` 維護第一批指標讀法，包含：
+
+- 資料完整度、缺失值、平均數、中位數、標準差
+- RMSE、MAE、R²、Accuracy、F1-score
+- Feature importance、Residual
+- Return、Volatility、Moving Average、RSI、MACD、VaR、Forecast
+
+這些說明不只是 tooltip，而會直接出現在分析結果、模型頁、金融頁與報告內容中，讓使用者不需要先懂統計學也能理解數字代表什麼。
+
+### 金融預測防護
+
+金融頁不再把線性外推直接稱為確定預測，而是顯示為「基準情境估計」。若資料量不足、預測與最新值落差過大，或尚未完成回測，系統會降低可信度並顯示警告。所有金融分析都應視為資料理解輔助，不構成投資建議。
 
 ## 開發階段路線圖
 
@@ -627,5 +733,10 @@ npm audit --audit-level=moderate
 - 分類問題會先將目標欄位轉成數值標籤；目前已額外回傳 Accuracy 與 F1，仍保留 R2、RMSE、MAE 以符合原驗收欄位。
 - 目前報告輸出為 Word `.docx`；PDF 尚未實作。
 - LLM 摘要需要設定 `OPENAI_API_KEY`，未設定時會使用本機規則摘要並在 API 回傳中註明。
-- Browser 工具在本 session 對 `localhost:3000` 的開啟動作被安全政策拒絕，因此本次前端驗證以 `npm run typecheck`、`npm run build -- --webpack`、本機健康檢查與後端 TestClient 測試為主。
+- `generated_outputs/` 不再由公開靜態路徑直接提供下載，後端會回傳短效 capability URL。這仍不等同使用者登入、tenant authorization、租戶隔離與完整清理期限；不得用於公開匿名上傳或敏感資料。
+- 目前沒有 API rate limiting；正式公開服務應在反向代理或應用層加入使用者與 IP 配額。
+- pandas、scikit-learn 與繪圖工作目前仍在 Web 服務程序中執行；高併發部署應移至工作佇列與獨立 worker。
+- 前端目前使用 TypeScript 型別描述 API，尚未加入 Zod 等執行期 response schema 驗證。
+- `npm audit` 在 2026-06-14 因執行環境無法連線 npm registry 而未完成，不能據此宣稱依賴沒有已知弱點。
+- 2026-06-14 已完成 `npm run typecheck`、`npm run build -- --webpack`、`git diff --check` 與 23 項後端測試，包含真實 `/api/jobs/models` 上傳、輪詢與輸出整合測試。另以 production server 完成 1280px、768px、390px Browser 驗收，首頁、工作區、資料頁與英文頁均無水平溢位或 console 錯誤。
 - Excel 上傳依賴 `openpyxl` / `xlrd`，請依照 `backend/requirements.txt` 安裝。
