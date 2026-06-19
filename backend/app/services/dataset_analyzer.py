@@ -567,12 +567,17 @@ def _unique_metadata_column(
 
 def _read_json_dataset(content: bytes) -> pd.DataFrame:
     try:
-        parsed = json.loads(content.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
         raise HTTPException(
             status_code=422,
-            detail="無法解析 JSON 檔案，請確認內容是有效 JSON。",
+            detail="無法解碼 JSON 檔案，請確認檔案使用 UTF-8 編碼。",
         ) from exc
+
+    try:
+        parsed = json.loads(decoded)
+    except json.JSONDecodeError as exc:
+        return _read_json_lines_dataset(decoded, original_error=exc)
 
     if isinstance(parsed, list):
         return pd.json_normalize(parsed)
@@ -588,6 +593,39 @@ def _read_json_dataset(content: bytes) -> pd.DataFrame:
         status_code=422,
         detail="JSON 檔案必須是物件、物件陣列，或包含 data/records/items/rows 陣列。",
     )
+
+
+def _read_json_lines_dataset(
+    decoded: str,
+    *,
+    original_error: json.JSONDecodeError,
+) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    lines = [line.strip() for line in decoded.splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(status_code=422, detail="JSON 檔案沒有可讀取的資料。") from original_error
+
+    try:
+        for line in lines:
+            parsed_line = json.loads(line)
+            if isinstance(parsed_line, dict):
+                records.append(parsed_line)
+            elif isinstance(parsed_line, list) and all(isinstance(item, dict) for item in parsed_line):
+                records.extend(parsed_line)
+            else:
+                raise ValueError("JSON Lines 每一列必須是物件或物件陣列。")
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="無法解析 JSON 檔案，請確認內容是有效 JSON、JSON Lines 或 NDJSON。",
+        ) from exc
+
+    if not records:
+        raise HTTPException(status_code=422, detail="JSON Lines 檔案沒有可讀取的物件資料。")
+
+    df = pd.json_normalize(records)
+    df.attrs["parser_warnings"] = ["已偵測 JSON Lines/NDJSON 格式，系統已逐列解析資料。"]
+    return df
 
 
 def _build_quality_report(

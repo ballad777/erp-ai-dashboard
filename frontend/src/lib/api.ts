@@ -155,6 +155,7 @@ export type ModelAnalysis = {
   analysis_mode: "auto" | "regression" | "classification";
   problem_type: "regression" | "classification";
   row_count_used: number;
+  source_row_count?: number | null;
   feature_count_used: number;
   model_results: ModelMetric[];
   model_selection_mode: "auto" | "custom";

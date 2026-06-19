@@ -94,6 +94,7 @@ class ModelAnalysisResponse(BaseModel):
     analysis_mode: str
     problem_type: str
     row_count_used: int
+    source_row_count: int | None = None
     feature_count_used: int
     model_results: list[ModelMetric]
     model_selection_mode: str

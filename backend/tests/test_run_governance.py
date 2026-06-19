@@ -1,6 +1,7 @@
 import base64
 import json
 from pathlib import Path
+from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
 
@@ -10,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _decode_payload_from_artifact_url(url: str) -> dict[str, object]:
-    token = url.removeprefix("/api/artifacts/")
+    token = unquote(url.removeprefix("/api/artifacts/"))
     payload_part = token.split(".", maxsplit=1)[0]
     padding = "=" * (-len(payload_part) % 4)
     return json.loads(base64.urlsafe_b64decode(payload_part + padding))

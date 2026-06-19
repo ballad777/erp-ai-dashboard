@@ -44,7 +44,7 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, OneHotEncoder
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
@@ -64,6 +64,26 @@ DATA_DIR = GENERATED_OUTPUTS_DIR / "data"
 MODEL_DIR = GENERATED_OUTPUTS_DIR / "models"
 REPORT_DIR = GENERATED_OUTPUTS_DIR / "reports"
 MODEL_RANDOM_STATE = 42
+MAX_AUTO_MODEL_TRAIN_ROWS = 12_000
+MAX_CUSTOM_MODEL_TRAIN_ROWS = 20_000
+MAX_ONE_HOT_CATEGORIES = 64
+SLOW_MODEL_ROW_LIMIT = 6_000
+SLOW_MODEL_FEATURE_LIMIT = 24
+HIGH_CARDINALITY_MIN_UNIQUE = 1_000
+HIGH_CARDINALITY_RATIO = 0.45
+SLOW_MODEL_KEYS = {"svr", "svc", "knn_regressor", "knn_classifier"}
+ID_LIKE_COLUMN_NAMES = {
+    "id",
+    "index",
+    "row_id",
+    "uuid",
+    "guid",
+    "customer_id",
+    "user_id",
+    "order_id",
+    "transaction_id",
+    "source_row_number",
+}
 ANALYSIS_MODES = {"auto", "regression", "classification"}
 MODEL_SELECTION_MODES = {"auto", "custom"}
 MODEL_SELECTION_ALIASES = {"manual": "custom"}
@@ -275,21 +295,20 @@ def run_model_analysis(
     if target_column not in df.columns:
         raise HTTPException(status_code=400, detail="指定的目標欄位不存在。")
 
-    working_df = df.dropna(subset=[target_column]).copy()
-    if working_df.empty:
+    notes: list[str] = []
+    source_row_count = int(len(df))
+    source_working_df = df.dropna(subset=[target_column]).copy()
+    if source_working_df.empty:
         raise HTTPException(status_code=400, detail="目標欄位全部都是缺失值，無法訓練模型。")
 
-    y_raw = working_df[target_column]
-    x_raw = working_df.drop(columns=[target_column])
-    x_raw = x_raw.dropna(axis=1, how="all")
-
-    if x_raw.empty:
-        raise HTTPException(status_code=400, detail="除了目標欄位外沒有可用特徵。")
+    dropped_target_rows = source_row_count - int(len(source_working_df))
+    if dropped_target_rows:
+        notes.append(f"目標欄位缺失的 {dropped_target_rows} 筆資料未納入模型訓練；原始資料摘要仍保留完整資料。")
 
     emit_progress(progress_callback, "detecting_problem", "正在判斷問題類型。")
-    inferred_problem_type = _infer_problem_type(y_raw)
+    full_target = source_working_df[target_column]
+    inferred_problem_type = _infer_problem_type(full_target)
     problem_type = inferred_problem_type if requested_mode == "auto" else requested_mode
-    notes: list[str] = []
 
     if requested_mode == "auto":
         notes.append(f"系統自動判斷此資料適合使用「{_problem_type_label(problem_type)}」分析。")
@@ -299,8 +318,23 @@ def run_model_analysis(
             f"本次依使用者選擇改用「{_problem_type_label(problem_type)}」。"
         )
 
+    working_df = _prepare_modeling_dataframe(
+        source_working_df,
+        target_column=target_column,
+        problem_type=problem_type,
+        model_selection_mode=requested_model_selection_mode,
+        notes=notes,
+    )
+    y_raw = working_df[target_column]
+    x_raw = working_df.drop(columns=[target_column]).dropna(axis=1, how="all")
+
+    if x_raw.empty:
+        raise HTTPException(status_code=400, detail="除了目標欄位外沒有可用特徵。")
+
     y, target_notes = _prepare_target(y_raw, problem_type)
     notes.extend(target_notes)
+    if x_raw.isna().any().any():
+        notes.append("模型管線僅在訓練時計算缺失值補值；不會改寫原始資料、資料摘要或下載資料。")
 
     if len(np.unique(y)) < 2:
         raise HTTPException(status_code=400, detail="目標欄位有效類別或數值不足，至少需要兩種值。")
@@ -339,8 +373,15 @@ def run_model_analysis(
         notes=notes,
     )
     available_models = get_model_options(problem_type)
+    recommendation_notes: list[str] = []
+    recommended_specs = _filter_resource_intensive_specs(
+        _recommend_model_specs(problem_type, x_raw, y_raw),
+        features=x_raw,
+        manual_selection=False,
+        notes=recommendation_notes,
+    )
     recommended_models = [
-        _model_option_payload(spec) for spec in _recommend_model_specs(problem_type, x_raw, y_raw)
+        _model_option_payload(spec) for spec in recommended_specs
     ]
     model_results: list[dict[str, Any]] = []
     fitted_models: dict[str, Pipeline] = {}
@@ -373,53 +414,62 @@ def run_model_analysis(
             ]
         )
 
-        pipeline, best_params, training_time_seconds = _fit_pipeline(
-            pipeline=pipeline,
-            spec=spec,
-            x_train=x_train,
-            y_train=y_train,
-            problem_type=problem_type,
-            automl_mode=requested_automl_mode,
-            notes=notes,
-        )
-        predictions = np.asarray(pipeline.predict(x_test), dtype=float)
-        model_path = _save_trained_model(pipeline, spec.key)
-        result_payload: dict[str, Any] = {
-            "model_key": spec.key,
-            "model_name": spec.label,
-            "model_family": spec.family,
-            "r2": round(float(r2_score(y_test, predictions)), 6),
-            "rmse": round(float(_root_mean_squared_error(y_test, predictions)), 6),
-            "mae": round(float(mean_absolute_error(y_test, predictions)), 6),
-            "training_time_seconds": round(training_time_seconds, 6),
-            "automl_best_params": best_params,
-            "model_path": str(model_path.relative_to(REPO_ROOT)),
-            "model_url": create_artifact_url(
-                model_path,
-                root=GENERATED_OUTPUTS_DIR,
-            ),
-        }
-
-        if problem_type == "classification":
-            rounded_predictions = np.rint(predictions).astype(int)
-            result_payload["accuracy"] = round(float(accuracy_score(y_test, rounded_predictions)), 6)
-            result_payload["f1_score"] = round(
-                float(f1_score(y_test, rounded_predictions, average="weighted", zero_division=0)),
-                6,
+        try:
+            pipeline, best_params, training_time_seconds = _fit_pipeline(
+                pipeline=pipeline,
+                spec=spec,
+                x_train=x_train,
+                y_train=y_train,
+                problem_type=problem_type,
+                automl_mode=requested_automl_mode,
+                notes=notes,
             )
-        else:
-            result_payload["accuracy"] = None
-            result_payload["f1_score"] = None
+            predictions = np.asarray(pipeline.predict(x_test), dtype=float)
+            model_path = _save_trained_model(pipeline, spec.key)
+            result_payload: dict[str, Any] = {
+                "model_key": spec.key,
+                "model_name": spec.label,
+                "model_family": spec.family,
+                "r2": round(float(r2_score(y_test, predictions)), 6),
+                "rmse": round(float(_root_mean_squared_error(y_test, predictions)), 6),
+                "mae": round(float(mean_absolute_error(y_test, predictions)), 6),
+                "training_time_seconds": round(training_time_seconds, 6),
+                "automl_best_params": best_params,
+                "model_path": str(model_path.relative_to(REPO_ROOT)),
+                "model_url": create_artifact_url(
+                    model_path,
+                    root=GENERATED_OUTPUTS_DIR,
+                ),
+            }
 
-        fitted_models[spec.label] = pipeline
-        predictions_by_model[spec.label] = predictions
-        model_results.append(result_payload)
-        emit_progress(
-            progress_callback,
-            "training_models",
-            f"已完成模型：{spec.label}",
-            index + 1,
-            len(model_specs),
+            if problem_type == "classification":
+                rounded_predictions = np.rint(predictions).astype(int)
+                result_payload["accuracy"] = round(float(accuracy_score(y_test, rounded_predictions)), 6)
+                result_payload["f1_score"] = round(
+                    float(f1_score(y_test, rounded_predictions, average="weighted", zero_division=0)),
+                    6,
+                )
+            else:
+                result_payload["accuracy"] = None
+                result_payload["f1_score"] = None
+
+            fitted_models[spec.label] = pipeline
+            predictions_by_model[spec.label] = predictions
+            model_results.append(result_payload)
+            emit_progress(
+                progress_callback,
+                "training_models",
+                f"已完成模型：{spec.label}",
+                index + 1,
+                len(model_specs),
+            )
+        except Exception as exc:  # noqa: BLE001 - one failed model should not fail the full analysis
+            notes.append(f"{spec.label} 訓練失敗，已略過：{_safe_model_error(exc)}")
+
+    if not fitted_models:
+        raise HTTPException(
+            status_code=422,
+            detail="所有候選模型都無法完成訓練，請更換目標欄位或移除無效特徵後再試一次。",
         )
 
     ensure_not_cancelled(should_cancel)
@@ -484,7 +534,7 @@ def run_model_analysis(
     )
     primary_chart = charts[0] if charts else None
     model_results_path = _save_model_results(model_results)
-    cleaned_dataset_path = _save_cleaned_dataset(working_df, file_name)
+    cleaned_dataset_path = _save_cleaned_dataset(source_working_df, file_name)
 
     result = {
         "file_name": file_name,
@@ -492,6 +542,7 @@ def run_model_analysis(
         "analysis_mode": requested_mode,
         "problem_type": problem_type,
         "row_count_used": int(len(working_df)),
+        "source_row_count": source_row_count,
         "feature_count_used": int(x_raw.shape[1]),
         "model_results": model_results,
         "model_selection_mode": requested_model_selection_mode,
@@ -515,7 +566,7 @@ def run_model_analysis(
         "selected_chart_types": selected_chart_types,
         "notes": notes,
     }
-    dataset_summary = analyze_dataframe(working_df, file_name=file_name)
+    dataset_summary = analyze_dataframe(df, file_name=file_name)
     result.update(
         build_model_brief(
             dataset_summary=dataset_summary,
@@ -613,7 +664,7 @@ def _model_catalog() -> list[ModelSpec]:
             family="linear",
             description="對多重共線性較穩定，適合中小型數值資料。",
             complexity="low",
-            estimator_factory=lambda: Ridge(alpha=1.0, random_state=MODEL_RANDOM_STATE),
+            estimator_factory=lambda: Ridge(alpha=1.0, solver="lsqr"),
             param_grid_factory=lambda _: {"alpha": [0.1, 1.0, 10.0]},
         ),
         ModelSpec(
@@ -665,7 +716,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="穩健的非線性模型，適合混合欄位與一般表格資料。",
             complexity="medium",
             estimator_factory=lambda: RandomForestRegressor(
-                n_estimators=160,
+                n_estimators=80,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -682,7 +733,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="隨機化更強，常用來檢查特徵訊號與穩健性。",
             complexity="medium",
             estimator_factory=lambda: ExtraTreesRegressor(
-                n_estimators=180,
+                n_estimators=100,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -753,7 +804,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="穩健的表格資料分類模型，可處理非線性關係。",
             complexity="medium",
             estimator_factory=lambda: RandomForestClassifier(
-                n_estimators=160,
+                n_estimators=80,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -770,7 +821,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="強隨機化集成模型，適合檢查分類特徵穩定性。",
             complexity="medium",
             estimator_factory=lambda: ExtraTreesClassifier(
-                n_estimators=180,
+                n_estimators=100,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -824,7 +875,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="高效梯度提升模型，適合表格資料的高精度回歸。",
                 complexity="high",
                 estimator_factory=lambda: XGBRegressor(
-                    n_estimators=120,
+                    n_estimators=80,
                     learning_rate=0.08,
                     max_depth=3,
                     objective="reg:squarederror",
@@ -847,7 +898,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="輕量化梯度提升模型，適合較大的表格資料。",
                 complexity="high",
                 estimator_factory=lambda: LGBMRegressor(
-                    n_estimators=120,
+                    n_estimators=80,
                     learning_rate=0.08,
                     max_depth=4,
                     random_state=MODEL_RANDOM_STATE,
@@ -870,7 +921,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="高效梯度提升分類模型，適合表格資料分類。",
                 complexity="high",
                 estimator_factory=lambda: XGBClassifier(
-                    n_estimators=120,
+                    n_estimators=80,
                     learning_rate=0.08,
                     max_depth=3,
                     random_state=MODEL_RANDOM_STATE,
@@ -893,7 +944,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="輕量化梯度提升分類模型，適合較大的表格資料。",
                 complexity="high",
                 estimator_factory=lambda: LGBMClassifier(
-                    n_estimators=120,
+                    n_estimators=80,
                     learning_rate=0.08,
                     max_depth=4,
                     random_state=MODEL_RANDOM_STATE,
@@ -920,6 +971,12 @@ def _select_model_specs(
 ) -> list[ModelSpec]:
     if model_selection_mode == "auto" or selected_models.strip().lower() == "auto":
         specs = _recommend_model_specs(problem_type, features, target)
+        specs = _filter_resource_intensive_specs(
+            specs,
+            features=features,
+            manual_selection=False,
+            notes=notes,
+        )
         notes.append(
             "系統已依資料列數、特徵數、欄位型態、缺失比例與問題類型自動推薦模型。"
         )
@@ -950,8 +1007,55 @@ def _select_model_specs(
             detail=f"模型不支援或不適合目前問題型態：{', '.join(unsupported)}。",
         )
 
+    selected_specs = _filter_resource_intensive_specs(
+        selected_specs,
+        features=features,
+        manual_selection=True,
+        notes=notes,
+    )
     notes.append(f"本次依使用者手動選擇執行 {len(selected_specs)} 個模型。")
     return selected_specs
+
+
+def _filter_resource_intensive_specs(
+    specs: list[ModelSpec],
+    *,
+    features: pd.DataFrame,
+    manual_selection: bool,
+    notes: list[str],
+) -> list[ModelSpec]:
+    row_count = int(features.shape[0])
+    feature_count = int(features.shape[1])
+    categorical_count = len(
+        [column for column in features.columns if not pd.api.types.is_numeric_dtype(features[column])]
+    )
+    should_skip_slow_models = (
+        row_count > SLOW_MODEL_ROW_LIMIT
+        or feature_count > SLOW_MODEL_FEATURE_LIMIT
+        or categorical_count > 0
+    )
+    if not should_skip_slow_models:
+        return specs
+
+    skipped = [spec for spec in specs if spec.key in SLOW_MODEL_KEYS]
+    if not skipped:
+        return specs
+
+    retained = [spec for spec in specs if spec.key not in SLOW_MODEL_KEYS]
+    skipped_labels = "、".join(spec.label for spec in skipped)
+    if manual_selection and not retained:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{skipped_labels} 不適合目前資料規模或欄位型態，容易造成分析逾時。"
+                "請改選樹模型、線性模型或先縮小資料後再試。"
+            ),
+        )
+
+    notes.append(
+        f"為避免大型或含類別欄位的資料分析逾時，已略過高成本模型：{skipped_labels}。"
+    )
+    return retained
 
 
 def _recommend_model_specs(
@@ -965,13 +1069,23 @@ def _recommend_model_specs(
     categorical_count = len([column for column in features.columns if not pd.api.types.is_numeric_dtype(features[column])])
     missing_ratio = float(features.isna().mean().mean()) if feature_count > 0 else 0
     target_unique_count = int(target.dropna().nunique())
+    is_large_dataset = row_count > SLOW_MODEL_ROW_LIMIT
+    is_wide_or_sparse = feature_count >= 20 or missing_ratio > 0.15
 
     if problem_type == "regression":
         if row_count <= 80:
             keys = ["ridge", "lasso", "elastic_net", "random_forest", "gradient_boosting_regressor", "xgboost_regressor"]
             if feature_count <= 8:
                 keys.append("knn_regressor")
-        elif feature_count >= 20 or missing_ratio > 0.15:
+        elif is_large_dataset:
+            keys = [
+                "random_forest",
+                "extra_trees_regressor",
+                "gradient_boosting_regressor",
+                "lightgbm_regressor",
+                "xgboost_regressor",
+            ]
+        elif is_wide_or_sparse:
             keys = [
                 "ridge",
                 "elastic_net",
@@ -989,8 +1103,9 @@ def _recommend_model_specs(
                 "gradient_boosting_regressor",
                 "xgboost_regressor",
                 "lightgbm_regressor",
-                "svr",
             ]
+            if row_count <= SLOW_MODEL_ROW_LIMIT and feature_count <= 12 and categorical_count == 0:
+                keys.append("svr")
     else:
         if row_count <= 80 or target_unique_count <= 5:
             keys = [
@@ -1002,6 +1117,14 @@ def _recommend_model_specs(
             ]
             if feature_count <= 10:
                 keys.append("knn_classifier")
+        elif is_large_dataset:
+            keys = [
+                "logistic_regression",
+                "random_forest_classifier",
+                "extra_trees_classifier",
+                "lightgbm_classifier",
+                "xgboost_classifier",
+            ]
         elif categorical_count > 0 or missing_ratio > 0.15:
             keys = [
                 "logistic_regression",
@@ -1018,8 +1141,9 @@ def _recommend_model_specs(
                 "gradient_boosting_classifier",
                 "xgboost_classifier",
                 "lightgbm_classifier",
-                "svc",
             ]
+            if row_count <= SLOW_MODEL_ROW_LIMIT and feature_count <= 12 and categorical_count == 0:
+                keys.append("svc")
 
     return [catalog[key] for key in keys if key in catalog]
 
@@ -1078,6 +1202,101 @@ def _select_chart_types(
     return final_selection or ["model_comparison"]
 
 
+def _prepare_modeling_dataframe(
+    source_df: pd.DataFrame,
+    *,
+    target_column: str,
+    problem_type: str,
+    model_selection_mode: str,
+    notes: list[str],
+) -> pd.DataFrame:
+    modeling_df = source_df.copy()
+    feature_columns = [column for column in modeling_df.columns if column != target_column]
+    columns_to_drop: list[str] = []
+    drop_reasons: list[str] = []
+
+    for column in feature_columns:
+        series = modeling_df[column]
+        column_name = str(column)
+        if series.isna().all():
+            columns_to_drop.append(column)
+            drop_reasons.append(f"{column_name}：全欄位缺失")
+            continue
+
+        if _is_id_like_column(column_name):
+            columns_to_drop.append(column)
+            drop_reasons.append(f"{column_name}：識別碼欄位，不適合直接作為預測特徵")
+            continue
+
+        if not pd.api.types.is_numeric_dtype(series):
+            non_null = series.dropna()
+            unique_count = int(non_null.nunique(dropna=True))
+            unique_ratio = unique_count / max(1, int(len(non_null)))
+            if unique_count >= HIGH_CARDINALITY_MIN_UNIQUE and unique_ratio >= HIGH_CARDINALITY_RATIO:
+                columns_to_drop.append(column)
+                drop_reasons.append(f"{column_name}：高基數文字欄位，避免產生過大的 one-hot 矩陣")
+
+    if columns_to_drop:
+        modeling_df = modeling_df.drop(columns=columns_to_drop)
+        preview = "；".join(drop_reasons[:6])
+        if len(drop_reasons) > 6:
+            preview += f"；另有 {len(drop_reasons) - 6} 欄"
+        notes.append(f"模型訓練已排除不適合建模的欄位：{preview}。原始資料與摘要未被刪改。")
+
+    max_rows = (
+        MAX_AUTO_MODEL_TRAIN_ROWS
+        if model_selection_mode == "auto"
+        else MAX_CUSTOM_MODEL_TRAIN_ROWS
+    )
+    if len(modeling_df) > max_rows:
+        sampled_df = _sample_modeling_dataframe(
+            modeling_df,
+            target_column=target_column,
+            problem_type=problem_type,
+            max_rows=max_rows,
+        )
+        notes.append(
+            f"原始有效訓練資料 {len(modeling_df)} 筆；為避免雲端服務逾時，"
+            f"模型比較使用固定 random seed 從真實資料抽樣 {len(sampled_df)} 筆。"
+        )
+        modeling_df = sampled_df
+
+    return modeling_df
+
+
+def _sample_modeling_dataframe(
+    df: pd.DataFrame,
+    *,
+    target_column: str,
+    problem_type: str,
+    max_rows: int,
+) -> pd.DataFrame:
+    stratify_target: pd.Series | None = None
+    if problem_type == "classification":
+        target_counts = df[target_column].value_counts(dropna=False)
+        if (
+            len(target_counts) >= 2
+            and int(target_counts.min()) >= 2
+            and len(target_counts) <= max(2, max_rows // 2)
+        ):
+            stratify_target = df[target_column]
+
+    sampled_df, _ = train_test_split(
+        df,
+        train_size=max_rows,
+        random_state=MODEL_RANDOM_STATE,
+        stratify=stratify_target,
+    )
+    return sampled_df.sort_index()
+
+
+def _is_id_like_column(column_name: str) -> bool:
+    normalized = column_name.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in ID_LIKE_COLUMN_NAMES:
+        return True
+    return normalized.endswith("_id") or normalized.endswith("_uuid") or normalized.endswith("_guid")
+
+
 def _infer_problem_type(target: pd.Series) -> str:
     non_null_target = target.dropna()
 
@@ -1117,7 +1336,12 @@ def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
         transformers.append(
             (
                 "numeric",
-                Pipeline(steps=[("imputer", SimpleImputer(strategy="median"))]),
+                Pipeline(
+                    steps=[
+                        ("imputer", SimpleImputer(strategy="median")),
+                        ("scaler", StandardScaler()),
+                    ]
+                ),
                 numeric_features,
             )
         )
@@ -1130,7 +1354,13 @@ def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
                     steps=[
                         ("imputer", SimpleImputer(strategy="most_frequent")),
                         ("to_string", FunctionTransformer(_to_string_array)),
-                        ("encoder", OneHotEncoder(handle_unknown="ignore")),
+                        (
+                            "encoder",
+                            OneHotEncoder(
+                                handle_unknown="infrequent_if_exist",
+                                max_categories=MAX_ONE_HOT_CATEGORIES,
+                            ),
+                        ),
                     ]
                 ),
                 categorical_features,
@@ -1188,6 +1418,13 @@ def _fit_pipeline(
     pipeline.fit(x_train, y_train)
     training_time_seconds = perf_counter() - started_at
     return pipeline, best_params, training_time_seconds
+
+
+def _safe_model_error(exc: Exception) -> str:
+    message = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+    if len(message) > 180:
+        message = f"{message[:177]}..."
+    return message
 
 
 def _cv_folds(problem_type: str, y_train: np.ndarray) -> int:

@@ -92,6 +92,25 @@ def test_read_uploaded_dataframe_detects_semicolon_csv_delimiter() -> None:
     assert df["score"].tolist() == [10, 12]
 
 
+def test_read_uploaded_dataframe_accepts_json_lines() -> None:
+    payload = (
+        '{"date":"2026-01-01","sales":120,"region":"north"}\n'
+        '{"date":"2026-01-02","sales":138,"region":"south"}\n'
+    ).encode("utf-8")
+    upload = UploadFile(
+        file=BytesIO(payload),
+        filename="records.json",
+        size=len(payload),
+    )
+
+    df, file_name = asyncio.run(read_uploaded_dataframe(upload))
+
+    assert file_name == "records.json"
+    assert df.columns.tolist() == ["date", "sales", "region"]
+    assert df["sales"].tolist() == [120, 138]
+    assert "JSON Lines" in df.attrs["parser_warnings"][0]
+
+
 def test_read_uploaded_dataframe_recovers_from_bad_csv_lines_with_warning() -> None:
     upload = UploadFile(
         file=BytesIO(b"player,score\nA,10\nB,12,unexpected\nC,14\n"),

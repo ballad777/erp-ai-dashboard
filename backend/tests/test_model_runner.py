@@ -1,8 +1,9 @@
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 
-from app.services.model_runner import REPO_ROOT, run_model_analysis
+from app.services.model_runner import MAX_AUTO_MODEL_TRAIN_ROWS, REPO_ROOT, run_model_analysis
 
 
 def test_run_model_analysis_auto_recommends_regression_models() -> None:
@@ -202,6 +203,43 @@ def test_run_model_analysis_handles_mixed_type_categorical_features() -> None:
         "baseline_regressor",
         "ridge",
     ]
+
+
+def test_run_model_analysis_keeps_large_high_cardinality_data_fast() -> None:
+    row_count = MAX_AUTO_MODEL_TRAIN_ROWS + 4_000
+    df = pd.DataFrame(
+        {
+            "customer_id": [f"CUST-{index:06d}" for index in range(row_count)],
+            "region": [["north", "south", "west", "east"][index % 4] for index in range(row_count)],
+            "product": [["A", "B", "C"][index % 3] for index in range(row_count)],
+            "units": [(index % 8) + 1 for index in range(row_count)],
+            "unit_price": [95 + (index % 11) * 2 for index in range(row_count)],
+            "revenue": [
+                ((index % 8) + 1) * (95 + (index % 11) * 2) + (index % 5)
+                for index in range(row_count)
+            ],
+        }
+    )
+
+    started = perf_counter()
+    result = run_model_analysis(
+        df,
+        file_name="large_sales.csv",
+        target_column="revenue",
+        chart_types="model_comparison",
+    )
+    elapsed = perf_counter() - started
+
+    assert elapsed < 45
+    assert result["source_row_count"] == row_count
+    assert result["row_count_used"] == MAX_AUTO_MODEL_TRAIN_ROWS
+    assert result["feature_count_used"] == 4
+    assert "customer_id" not in result["selected_model_keys"]
+    assert "svr" not in result["selected_model_keys"]
+    assert "knn_regressor" not in result["selected_model_keys"]
+    assert any("抽樣" in note for note in result["notes"])
+    assert any("customer_id" in note for note in result["notes"])
+    assert result["charts"]
 
 
 def test_run_model_analysis_rejects_heatmap_chart() -> None:

@@ -3546,3 +3546,90 @@ INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack
 - `npm run typecheck`：通過。
 - `INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack`：通過。
 - Browser 驗收：`http://127.0.0.1:3012/app/charts` 顯示「專有名詞解釋」，導覽為「名詞」，主內容 `img` 數量為 0，無水平溢位。
+
+## 2026-06-19：修復 3MB 以上資料讀取後模型分析逾時
+
+### 已完成檔案
+
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/schemas.py`
+- `backend/tests/test_dataset_analyzer.py`
+- `backend/tests/test_model_runner.py`
+- `backend/tests/test_run_governance.py`
+- `frontend/src/lib/api.ts`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 修正 JSON Lines / NDJSON 讀取：`.json` 檔若不是標準 JSON 陣列，後端會嘗試逐列解析真實資料。
+- 大型模型分析加入固定 random seed 真實抽樣：
+  - 自動模式最多使用 12,000 筆真實資料訓練候選模型。
+  - 手動模式最多使用 20,000 筆真實資料訓練。
+  - 回傳 `source_row_count` 與 `row_count_used`，讓前端可區分原始資料列數與模型實際訓練列數。
+- 自動排除模型訓練不適合的欄位：
+  - `customer_id`、`order_id`、`source_row_number` 等識別碼欄位。
+  - 高基數文字欄位，避免 one-hot 矩陣爆量。
+  - 全欄位缺失欄位。
+- 類別欄位 one-hot encoder 加入 `max_categories=64`，避免少數高基數欄位造成記憶體與時間暴增。
+- 自動模型推薦避開大型資料上的 SVR / SVC / KNN，改用較穩定且可快速完成的樹模型與 boosting 模型。
+- 單一模型訓練失敗時會略過該模型並寫入 notes，不會讓整個分析直接中斷；若所有候選模型都失敗才回傳明確錯誤。
+- 數值特徵加入標準化，提升線性與距離類模型穩定性。
+- 測試 helper 更新為支援 artifact URL encoded token。
+- README 補充大型資料與真實分析策略，明確記錄不使用假資料與假圖表。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8002
+
+cd ../frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run dev -- --hostname 127.0.0.1 --port 3012
+```
+
+### 如何測試
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q
+
+cd frontend
+npm run build
+```
+
+人工驗收：
+
+1. 上傳 CSV / Excel / JSON / JSON Lines 檔案。
+2. 點選「讀取全部」，確認每個檔案都能顯示真實列數、欄位數、缺失值與摘要。
+3. 對 3MB 以上且含高基數欄位的資料執行模型分析，確認不再長時間卡住。
+4. 查看模型 notes，確認有標明抽樣列數、排除欄位與自動模型推薦原因。
+5. 確認圖表 URL 來自後端 `generated_outputs/charts/`，不是前端假圖。
+
+### 本次驗證結果
+
+- `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q`：48 passed。
+- `npm run build`：通過。
+- FastAPI TestClient 單檔上傳實測：
+  - `big5_taiwan_sales.csv`：0.025s，10,000 列、4 欄。
+  - `ragged_3mb.csv`：0.025s，100,000 列、3 欄。
+  - `records.json`：0.066s，35,000 列、4 欄。
+  - `records.xlsx`：0.194s，12,000 列、4 欄。
+  - `records_json_lines.json`：0.046s，20,000 列、4 欄。
+  - `sales_3mb.csv`：0.065s，70,000 列、8 欄。
+  - `semicolon.csv`：0.010s，10,000 列、3 欄。
+  - `wide_3mb.csv`：0.176s，3,500 列、180 欄。
+- FastAPI TestClient 多檔上傳實測：3 檔全部成功，0.308s。
+- `sales_3mb.csv` 模型分析實測：2.525s，原始 70,000 列，模型使用真實抽樣 12,000 列，自動模型為 Random Forest、Extra Trees、Gradient Boosting、LightGBM、XGBoost。
+
+### Known Issues
+
+- Render 免費方案第一次喚醒可能仍會有冷啟動延遲；這不是資料分析演算法逾時。
+- 目前模型訓練為同步執行於單一 Web Service；若未來要支援 100MB 以上資料或更完整 AutoML，應拆成背景 worker 與持久化 job queue。
+- LightGBM 在部分測試資料會輸出 feature name warning，但模型結果、圖表與 API 回傳正常。
+
+### 下一階段要做什麼
+
+- 把 `source_row_count` 與 `row_count_used` 顯示在模型結果頁，讓使用者清楚知道模型訓練使用範圍。
+- 為大型資料加入使用者可選的「快速 / 平衡 / 全量」模式。
+- 若公開測試者提供失敗檔案，新增對應 fixture 與回歸測試。
