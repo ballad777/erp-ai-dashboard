@@ -3565,7 +3565,7 @@ INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run build -- --webpack
 
 - 修正 JSON Lines / NDJSON 讀取：`.json` 檔若不是標準 JSON 陣列，後端會嘗試逐列解析真實資料。
 - 大型模型分析加入固定 random seed 真實抽樣：
-  - 自動模式最多使用 5,000 筆真實資料訓練候選模型。
+  - 自動模式最多使用 2,000 筆真實資料訓練候選模型。
   - 手動模式最多使用 20,000 筆真實資料訓練。
   - 回傳 `source_row_count` 與 `row_count_used`，讓前端可區分原始資料列數與模型實際訓練列數。
 - 自動排除模型訓練不適合的欄位：
@@ -3620,8 +3620,8 @@ npm run build
   - `semicolon.csv`：0.010s，10,000 列、3 欄。
   - `wide_3mb.csv`：0.176s，3,500 列、180 欄。
 - FastAPI TestClient 多檔上傳實測：3 檔全部成功，0.308s。
-- `sales_3mb.csv` 模型分析本地 HTTP 實測：0.805s，原始 70,000 列，模型使用真實抽樣 5,000 列，自動模型為 Decision Tree、Random Forest、Extra Trees、LightGBM、XGBoost。
-- 追加雲端同步 API 優化：大型自動分析改為 5,000 筆真實抽樣與較輕量候選模型，以避免 Render / Next proxy 約 30 秒限制。
+- `sales_3mb.csv` 模型分析本地 HTTP 實測：0.444s，原始 70,000 列，模型使用真實抽樣 2,000 列，自動模型為 Decision Tree、Random Forest、Extra Trees。
+- 追加雲端同步 API 優化：大型自動分析改為 2,000 筆真實抽樣與 Decision Tree、Random Forest、Extra Trees 快速候選模型，以避免 Render / Next proxy 約 30 秒限制。
 
 ### Known Issues
 
