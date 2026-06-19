@@ -64,10 +64,10 @@ DATA_DIR = GENERATED_OUTPUTS_DIR / "data"
 MODEL_DIR = GENERATED_OUTPUTS_DIR / "models"
 REPORT_DIR = GENERATED_OUTPUTS_DIR / "reports"
 MODEL_RANDOM_STATE = 42
-MAX_AUTO_MODEL_TRAIN_ROWS = 12_000
+MAX_AUTO_MODEL_TRAIN_ROWS = 5_000
 MAX_CUSTOM_MODEL_TRAIN_ROWS = 20_000
-MAX_ONE_HOT_CATEGORIES = 64
-SLOW_MODEL_ROW_LIMIT = 6_000
+MAX_ONE_HOT_CATEGORIES = 32
+SLOW_MODEL_ROW_LIMIT = 4_000
 SLOW_MODEL_FEATURE_LIMIT = 24
 HIGH_CARDINALITY_MIN_UNIQUE = 1_000
 HIGH_CARDINALITY_RATIO = 0.45
@@ -716,7 +716,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="穩健的非線性模型，適合混合欄位與一般表格資料。",
             complexity="medium",
             estimator_factory=lambda: RandomForestRegressor(
-                n_estimators=80,
+                n_estimators=50,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -733,7 +733,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="隨機化更強，常用來檢查特徵訊號與穩健性。",
             complexity="medium",
             estimator_factory=lambda: ExtraTreesRegressor(
-                n_estimators=100,
+                n_estimators=60,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -804,7 +804,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="穩健的表格資料分類模型，可處理非線性關係。",
             complexity="medium",
             estimator_factory=lambda: RandomForestClassifier(
-                n_estimators=80,
+                n_estimators=50,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -821,7 +821,7 @@ def _model_catalog() -> list[ModelSpec]:
             description="強隨機化集成模型，適合檢查分類特徵穩定性。",
             complexity="medium",
             estimator_factory=lambda: ExtraTreesClassifier(
-                n_estimators=100,
+                n_estimators=60,
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
@@ -875,7 +875,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="高效梯度提升模型，適合表格資料的高精度回歸。",
                 complexity="high",
                 estimator_factory=lambda: XGBRegressor(
-                    n_estimators=80,
+                    n_estimators=60,
                     learning_rate=0.08,
                     max_depth=3,
                     objective="reg:squarederror",
@@ -898,7 +898,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="輕量化梯度提升模型，適合較大的表格資料。",
                 complexity="high",
                 estimator_factory=lambda: LGBMRegressor(
-                    n_estimators=80,
+                    n_estimators=60,
                     learning_rate=0.08,
                     max_depth=4,
                     random_state=MODEL_RANDOM_STATE,
@@ -921,7 +921,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="高效梯度提升分類模型，適合表格資料分類。",
                 complexity="high",
                 estimator_factory=lambda: XGBClassifier(
-                    n_estimators=80,
+                    n_estimators=60,
                     learning_rate=0.08,
                     max_depth=3,
                     random_state=MODEL_RANDOM_STATE,
@@ -944,7 +944,7 @@ def _model_catalog() -> list[ModelSpec]:
                 description="輕量化梯度提升分類模型，適合較大的表格資料。",
                 complexity="high",
                 estimator_factory=lambda: LGBMClassifier(
-                    n_estimators=80,
+                    n_estimators=60,
                     learning_rate=0.08,
                     max_depth=4,
                     random_state=MODEL_RANDOM_STATE,
@@ -1079,9 +1079,9 @@ def _recommend_model_specs(
                 keys.append("knn_regressor")
         elif is_large_dataset:
             keys = [
+                "decision_tree_regressor",
                 "random_forest",
                 "extra_trees_regressor",
-                "gradient_boosting_regressor",
                 "lightgbm_regressor",
                 "xgboost_regressor",
             ]
@@ -1120,6 +1120,7 @@ def _recommend_model_specs(
         elif is_large_dataset:
             keys = [
                 "logistic_regression",
+                "decision_tree_classifier",
                 "random_forest_classifier",
                 "extra_trees_classifier",
                 "lightgbm_classifier",
