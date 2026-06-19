@@ -3622,6 +3622,11 @@ npm run build
 - FastAPI TestClient 多檔上傳實測：3 檔全部成功，0.308s。
 - `sales_3mb.csv` 模型分析本地 HTTP 實測：0.444s，原始 70,000 列，模型使用真實抽樣 2,000 列，自動模型為 Decision Tree、Random Forest、Extra Trees。
 - 追加雲端同步 API 優化：大型自動分析改為 2,000 筆真實抽樣與 Decision Tree、Random Forest、Extra Trees 快速候選模型，以避免 Render / Next proxy 約 30 秒限制。
+- 公開 Render 驗證：
+  - JSON Lines 單檔讀取：`HTTP 200`，20,000 列、4 欄。
+  - 3 檔多檔讀取：`HTTP 200`，`sales_3mb.csv`、`records_json_lines.json`、`records.xlsx` 均成功。
+  - `sales_3mb.csv` 同步模型分析：`HTTP 200`，17s，原始 70,000 列，模型使用 2,000 列真實抽樣。
+  - 模型比較圖 artifact：`HTTP 200`，PNG，1920 x 1024，49KB。
 
 ### Known Issues
 
