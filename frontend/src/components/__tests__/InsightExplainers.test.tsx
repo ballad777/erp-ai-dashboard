@@ -26,12 +26,12 @@ describe("InsightExplainers", () => {
     const user = userEvent.setup();
     renderZh(<ReadingDepthControl />);
 
-    await user.click(screen.getByRole("button", { name: "研究" }));
+    await user.click(screen.getByRole("button", { name: "研究模式" }));
 
     expect(window.localStorage.getItem("datapilot-reading-depth")).toBe(
       "research"
     );
-    expect(screen.getByRole("button", { name: "研究" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "研究模式" })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
@@ -77,7 +77,7 @@ describe("InsightExplainers", () => {
       </>
     );
 
-    await user.click(screen.getByRole("button", { name: "研究" }));
+    await user.click(screen.getByRole("button", { name: "研究模式" }));
     await user.click(screen.getByText("RMSE"));
 
     expect(screen.getByText("Root Mean Squared Error")).toBeInTheDocument();

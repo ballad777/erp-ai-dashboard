@@ -22,8 +22,8 @@ describe("DataLensHero", () => {
     const headline = screen.getByRole("heading", { level: 1 });
     const lines = headline.querySelectorAll("[data-hero-line]");
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toHaveTextContent("看懂資料");
-    expect(lines[1]).toHaveTextContent("找到下一步");
+    expect(lines[0]).toHaveTextContent("從資料到決策");
+    expect(lines[1]).toHaveTextContent("一個工作區完成");
     expect(headline).not.toHaveTextContent("。");
     expect(lines[0]).toHaveClass("whitespace-nowrap");
     expect(lines[1]).toHaveClass("whitespace-nowrap");
@@ -53,10 +53,10 @@ describe("DataLensHero", () => {
     expect(screen.getByText("發現 3 個關鍵訊號")).toBeInTheDocument();
   });
 
-  it("describes downloadable outputs without claiming result traceability", () => {
+  it("describes readable reports without claiming result traceability", () => {
     renderHero();
 
-    expect(screen.getByText("結果可下載")).toBeInTheDocument();
+    expect(screen.getByText("報告可直接閱讀")).toBeInTheDocument();
     expect(screen.queryByText("結果可追溯")).not.toBeInTheDocument();
   });
 });

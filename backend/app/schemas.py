@@ -26,6 +26,9 @@ class DatasetAnalysisResponse(BaseModel):
     possible_data_topics: list[dict[str, object]] = Field(default_factory=list)
     dataset_type: dict[str, object] = Field(default_factory=dict)
     confidence_score: int | None = None
+    domain_confidence_score: int | None = None
+    confidence_breakdown: dict[str, object] = Field(default_factory=dict)
+    dataset_story: dict[str, object] = Field(default_factory=dict)
     recommended_analysis_goals: list[dict[str, object]] = Field(default_factory=list)
     target_recommendations: list[dict[str, object]] = Field(default_factory=list)
     financial_eligibility: dict[str, object] = Field(default_factory=dict)

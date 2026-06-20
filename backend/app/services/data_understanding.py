@@ -16,9 +16,26 @@ class DomainDefinition:
     strong_clues: tuple[str, ...] = ()
 
 
+IRIS_DOMAIN = DomainDefinition(
+    key="iris_classification",
+    label="鳶尾花分類資料集",
+    clues=(
+        "iris",
+        "species",
+        "class",
+        "sepal",
+        "sepal_length",
+        "sepal_width",
+        "petal",
+        "petal_length",
+        "petal_width",
+    ),
+    strong_clues=("species", "sepal", "petal", "petallengthcm", "petalwidthcm"),
+)
+
 AI_LLM_DOMAIN = DomainDefinition(
     key="ai_llm",
-    label="AI / LLM 模型發展資料",
+    label="AI/LLM模型評估資料集",
     clues=(
         "model",
         "model_name",
@@ -73,7 +90,7 @@ AI_LLM_DOMAIN = DomainDefinition(
 
 FINANCIAL_DOMAIN = DomainDefinition(
     key="financial_timeseries",
-    label="金融時間序列資料",
+    label="金融時間序列資料集",
     clues=(
         "date",
         "timestamp",
@@ -93,7 +110,7 @@ FINANCIAL_DOMAIN = DomainDefinition(
 
 SPORTS_DOMAIN = DomainDefinition(
     key="sports",
-    label="體育表現資料",
+    label="體育表現資料集",
     clues=(
         "player",
         "team",
@@ -109,13 +126,98 @@ SPORTS_DOMAIN = DomainDefinition(
     strong_clues=("player", "team", "season", "game", "match"),
 )
 
+HOUSING_DOMAIN = DomainDefinition(
+    key="housing_price",
+    label="房價預測資料集",
+    clues=(
+        "house",
+        "housing",
+        "home",
+        "property",
+        "real_estate",
+        "saleprice",
+        "median_house_value",
+        "sqft",
+        "square_feet",
+        "bedroom",
+        "bathroom",
+        "lot_area",
+        "garage",
+        "neighborhood",
+        "房價",
+        "不動產",
+        "坪數",
+        "屋齡",
+        "地區",
+    ),
+    strong_clues=("saleprice", "median_house_value", "housing", "real_estate", "坪數", "屋齡"),
+)
+
+CUSTOMER_DOMAIN = DomainDefinition(
+    key="customer_behavior",
+    label="客戶行為分析資料集",
+    clues=(
+        "customer",
+        "client",
+        "user",
+        "churn",
+        "retention",
+        "segment",
+        "loyalty",
+        "recency",
+        "frequency",
+        "monetary",
+        "purchase",
+        "basket",
+        "客戶",
+        "會員",
+        "留存",
+        "流失",
+    ),
+    strong_clues=("customer_id", "churn", "retention", "segment", "loyalty", "客戶"),
+)
+
+SALES_DOMAIN = DomainDefinition(
+    key="sales_performance",
+    label="銷售績效資料集",
+    clues=(
+        "sales",
+        "sale",
+        "revenue",
+        "order",
+        "orders",
+        "quantity",
+        "units",
+        "profit",
+        "discount",
+        "product",
+        "region",
+        "store",
+        "invoice",
+        "營收",
+        "銷售",
+        "訂單",
+        "商品",
+        "利潤",
+    ),
+    strong_clues=("sales", "revenue", "order_id", "quantity", "profit", "營收", "銷售"),
+)
+
 GENERIC_DOMAIN = DomainDefinition(
-    key="general_table",
-    label="一般表格資料",
+    key="unclassified_dataset",
+    label="待確認資料集",
     clues=(),
 )
 
-DOMAIN_DEFINITIONS = (AI_LLM_DOMAIN, FINANCIAL_DOMAIN, SPORTS_DOMAIN)
+DOMAIN_DEFINITIONS = (
+    IRIS_DOMAIN,
+    AI_LLM_DOMAIN,
+    FINANCIAL_DOMAIN,
+    HOUSING_DOMAIN,
+    CUSTOMER_DOMAIN,
+    SALES_DOMAIN,
+    SPORTS_DOMAIN,
+)
 
 DATE_NAME_HINTS = ("date", "time", "timestamp", "year_month", "release_date", "created_at", "updated_at")
 ID_NAME_HINTS = ("id", "uuid", "guid", "index", "row_number")
@@ -142,53 +244,401 @@ NON_FINANCIAL_PRICE_CONTEXT = (
 )
 
 
-def build_dataset_understanding(df: pd.DataFrame, file_name: str) -> dict[str, Any]:
-    columns = [str(column) for column in df.columns]
-    row_count = int(len(df))
-    column_count = int(len(columns))
-    date_columns = _detect_date_columns(df)
-    numeric_columns = [str(column) for column in df.select_dtypes(include="number").columns]
-    text_columns = _detect_text_columns(df)
-    categorical_columns = _detect_categorical_columns(df, text_columns=text_columns)
-    primary_key_candidates = _detect_primary_key_candidates(df)
-    missing_ratio = float(df.isna().sum().sum() / max(1, row_count * column_count))
-    duplicate_ratio = float(df.duplicated().sum() / max(1, row_count))
-    domain_scores = _score_domains(columns, file_name=file_name)
-    possible_topics = _possible_topics(domain_scores)
-    primary_domain = possible_topics[0] if possible_topics else _topic_payload(GENERIC_DOMAIN, 35, [])
-    financial_eligibility = _financial_eligibility(
-        df=df,
-        primary_domain_key=str(primary_domain["key"]),
-        date_columns=date_columns,
-    )
-    target_recommendations = recommend_target_columns_for_purpose(df, primary_domain_key=str(primary_domain["key"]))
-    not_suitable_reasons = _not_suitable_reasons(
-        df=df,
-        primary_domain_key=str(primary_domain["key"]),
-        financial_eligibility=financial_eligibility,
-        target_recommendations=target_recommendations,
-    )
+class DataUnderstandingEngine:
+    """Rule-based semantic profiler for uploaded tabular datasets.
 
-    return {
-        "file_name": file_name,
-        "row_count": row_count,
-        "column_count": column_count,
-        "columns": columns,
-        "primary_key_candidates": primary_key_candidates,
-        "date_columns": date_columns,
-        "numeric_columns": numeric_columns,
-        "categorical_columns": categorical_columns,
-        "text_columns": text_columns,
-        "missing_value_ratio": round(missing_ratio, 6),
-        "duplicate_value_ratio": round(duplicate_ratio, 6),
-        "possible_data_topics": possible_topics,
-        "primary_domain": primary_domain,
-        "confidence_score": int(primary_domain.get("confidence_score") or 35),
-        "not_suitable_reasons": not_suitable_reasons,
-        "recommended_analysis_goals": _recommended_analysis_goals(str(primary_domain["key"])),
-        "target_recommendations": target_recommendations,
-        "financial_eligibility": financial_eligibility,
-    }
+    The engine intentionally uses transparent scoring instead of opaque labels.
+    Every returned classification carries evidence columns, confidence, and
+    limits so the UI can explain why the system made the call.
+    """
+
+    def analyze(self, df: pd.DataFrame, file_name: str) -> dict[str, Any]:
+        columns = [str(column) for column in df.columns]
+        row_count = int(len(df))
+        column_count = int(len(columns))
+        date_columns = _detect_date_columns(df)
+        numeric_columns = [str(column) for column in df.select_dtypes(include="number").columns]
+        text_columns = _detect_text_columns(df)
+        categorical_columns = _detect_categorical_columns(df, text_columns=text_columns)
+        primary_key_candidates = _detect_primary_key_candidates(df)
+        missing_ratio = float(df.isna().sum().sum() / max(1, row_count * column_count))
+        duplicate_ratio = float(df.duplicated().sum() / max(1, row_count))
+        domain_scores = _score_domains(columns, file_name=file_name)
+        possible_topics = _possible_topics(domain_scores)
+        primary_domain = possible_topics[0] if possible_topics else _topic_payload(GENERIC_DOMAIN, 35, [])
+        confidence_breakdown = ConfidenceScorer().score(
+            df=df,
+            missing_ratio=missing_ratio,
+            duplicate_ratio=duplicate_ratio,
+            primary_domain=primary_domain,
+        )
+        financial_eligibility = _financial_eligibility(
+            df=df,
+            primary_domain_key=str(primary_domain["key"]),
+            date_columns=date_columns,
+        )
+        target_recommendations = TargetRecommendationEngine().recommend(
+            df,
+            primary_domain_key=str(primary_domain["key"]),
+        )
+        dataset_story = DatasetStoryGenerator().generate(
+            df=df,
+            file_name=file_name,
+            primary_domain=primary_domain,
+            date_columns=date_columns,
+            numeric_columns=numeric_columns,
+            categorical_columns=categorical_columns,
+            target_recommendations=target_recommendations,
+        )
+        not_suitable_reasons = _not_suitable_reasons(
+            df=df,
+            primary_domain_key=str(primary_domain["key"]),
+            financial_eligibility=financial_eligibility,
+            target_recommendations=target_recommendations,
+        )
+
+        return {
+            "file_name": file_name,
+            "row_count": row_count,
+            "column_count": column_count,
+            "columns": columns,
+            "primary_key_candidates": primary_key_candidates,
+            "date_columns": date_columns,
+            "numeric_columns": numeric_columns,
+            "categorical_columns": categorical_columns,
+            "text_columns": text_columns,
+            "missing_value_ratio": round(missing_ratio, 6),
+            "duplicate_value_ratio": round(duplicate_ratio, 6),
+            "possible_data_topics": possible_topics,
+            "primary_domain": primary_domain,
+            "domain_confidence_score": int(primary_domain.get("confidence_score") or 35),
+            "confidence_score": int(confidence_breakdown["score"]),
+            "confidence_breakdown": confidence_breakdown,
+            "dataset_story": dataset_story,
+            "not_suitable_reasons": not_suitable_reasons,
+            "recommended_analysis_goals": _recommended_analysis_goals(str(primary_domain["key"])),
+            "target_recommendations": target_recommendations,
+            "financial_eligibility": financial_eligibility,
+        }
+
+
+class ConfidenceScorer:
+    def score(
+        self,
+        *,
+        df: pd.DataFrame,
+        missing_ratio: float,
+        duplicate_ratio: float,
+        primary_domain: dict[str, Any],
+    ) -> dict[str, Any]:
+        row_count = int(len(df))
+        column_count = int(df.shape[1])
+        completeness = 30 if row_count > 0 and column_count > 0 else 0
+        missing_quality = round(max(0, 25 * (1 - missing_ratio)))
+        sample_size = self._sample_score(row_count)
+        column_quality = self._column_score(df)
+        outlier_penalty = -self._outlier_penalty(df)
+        consistency = self._consistency_score(df, duplicate_ratio, primary_domain)
+        components = [
+            _confidence_component("data_completeness", "資料完整度", completeness, "資料列與欄位皆存在，可建立基本輪廓。"),
+            _confidence_component("missing_quality", "缺失值品質", missing_quality, f"整體缺失比例約 {missing_ratio * 100:.1f}%。"),
+            _confidence_component("sample_size", "樣本量", sample_size, f"目前共有 {row_count:,} 筆資料。"),
+            _confidence_component("column_quality", "欄位品質", column_quality, "欄位不是全空、全唯一或無法使用的比例較高。"),
+            _confidence_component("outlier_penalty", "異常值", outlier_penalty, "依 IQR 初步檢查數值欄位極端值。"),
+            _confidence_component("consistency", "一致性", consistency, "主題辨識、重複列與欄位語意一致性。"),
+        ]
+        total = max(0, min(100, int(round(sum(int(item["value"]) for item in components)))))
+        return {
+            "score": total,
+            "formula": "資料完整度 + 缺失值品質 + 樣本量 + 欄位品質 + 異常值調整 + 一致性",
+            "components": components,
+        }
+
+    @staticmethod
+    def _sample_score(row_count: int) -> int:
+        if row_count >= 150:
+            return 20
+        if row_count >= 100:
+            return 18
+        if row_count >= 50:
+            return 16
+        if row_count >= 30:
+            return 14
+        if row_count >= 10:
+            return 9
+        return 4
+
+    @staticmethod
+    def _column_score(df: pd.DataFrame) -> int:
+        if df.empty or df.shape[1] == 0:
+            return 0
+        usable = 0
+        for column in df.columns:
+            series = df[column].dropna()
+            if series.empty:
+                continue
+            unique_ratio = float(series.nunique(dropna=True) / max(1, len(series)))
+            normalized = _normalize_name(str(column))
+            if unique_ratio >= 0.98 and (_is_unsafe_target_name(normalized) or normalized.endswith("_id")):
+                continue
+            usable += 1
+        return min(10, round(10 * usable / max(1, df.shape[1])))
+
+    @staticmethod
+    def _outlier_penalty(df: pd.DataFrame) -> int:
+        numeric = df.select_dtypes(include="number")
+        if numeric.empty:
+            return 0
+        flagged = 0
+        for column in numeric.columns:
+            values = pd.to_numeric(numeric[column], errors="coerce").dropna()
+            if len(values) < 12:
+                continue
+            q1 = values.quantile(0.25)
+            q3 = values.quantile(0.75)
+            iqr = q3 - q1
+            if iqr == 0:
+                continue
+            ratio = float(((values < q1 - 1.5 * iqr) | (values > q3 + 1.5 * iqr)).mean())
+            if ratio >= 0.05:
+                flagged += 1
+        return min(8, flagged * 2)
+
+    @staticmethod
+    def _consistency_score(df: pd.DataFrame, duplicate_ratio: float, primary_domain: dict[str, Any]) -> int:
+        score = 8
+        if int(primary_domain.get("confidence_score") or 0) >= 75:
+            score += 4
+        if duplicate_ratio <= 0.02:
+            score += 2
+        if df.shape[1] >= 4:
+            score += 1
+        return min(15, score)
+
+
+class TargetRecommendationEngine:
+    def recommend(
+        self,
+        df: pd.DataFrame,
+        *,
+        primary_domain_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if primary_domain_key == IRIS_DOMAIN.key:
+            return self._iris_targets(df)
+        if primary_domain_key == AI_LLM_DOMAIN.key:
+            return self._ai_llm_targets(df)
+
+        candidates = self._domain_targets(df, primary_domain_key)
+        candidates.extend(self._generic_targets(df))
+        return _dedupe_target_candidates(candidates)[:5]
+
+    def _iris_targets(self, df: pd.DataFrame) -> list[dict[str, Any]]:
+        lookup = {_normalize_name(str(column)): str(column) for column in df.columns}
+        candidates: list[dict[str, Any]] = []
+        species = lookup.get("species") or lookup.get("class") or lookup.get("target")
+        if species:
+            candidates.append(
+                _target_payload(
+                    column=species,
+                    task_type="classification",
+                    confidence_score=98,
+                    purpose="花朵品種分類",
+                    reasons=["類別型欄位", "類別分布合理", "常見分類目標", "唯一值數量合理"],
+                )
+            )
+        ordered_regression = [
+            ("petallengthcm", 76),
+            ("petal_length", 76),
+            ("petalwidthcm", 72),
+            ("petal_width", 72),
+            ("sepallengthcm", 64),
+            ("sepal_length", 64),
+            ("sepalwidthcm", 58),
+            ("sepal_width", 58),
+        ]
+        seen: set[str] = set()
+        for normalized, score in ordered_regression:
+            column = lookup.get(normalized)
+            if not column or column in seen:
+                continue
+            seen.add(column)
+            candidates.append(
+                _target_payload(
+                    column=column,
+                    task_type="regression",
+                    confidence_score=score,
+                    purpose="花朵特徵預測",
+                    reasons=["連續數值欄位", "與其他花朵量測欄位可建立關係", "可做回歸示範但不如 Species 直覺"],
+                )
+            )
+        return candidates[:5]
+
+    def _ai_llm_targets(self, df: pd.DataFrame) -> list[dict[str, Any]]:
+        purpose_map = (
+            ("預測模型能力", "regression", 82, ("score", "score_pct", "benchmark_score")),
+            ("預測訓練成本", "regression", 78, ("training_cost", "training_cost_usd", "gpu_hours", "flops", "energy", "co2")),
+            ("API 價格分析", "regression", 76, ("input_usd", "output_usd", "blended_usd", "price_per_million", "tokens")),
+            ("時間趨勢分析", "time_series", 70, ("release_date", "date", "year_month", "timestamp", "release_year")),
+        )
+        recommendations: list[dict[str, Any]] = []
+        for purpose, task_type, score, hints in purpose_map:
+            for column in df.columns:
+                column_name = str(column)
+                if any(hint in _normalize_name(column_name) for hint in hints):
+                    recommendations.append(
+                        _target_payload(
+                            column=column_name,
+                            task_type=task_type,
+                            confidence_score=score,
+                            purpose=purpose,
+                            reasons=[
+                                "欄位語意符合 AI/LLM 分析目的",
+                                "需先確認 benchmark、價格或時間定義",
+                                "不應被誤用為體育分數或金融價格",
+                            ],
+                        )
+                    )
+        return _dedupe_target_candidates(recommendations)[:5]
+
+    def _domain_targets(self, df: pd.DataFrame, primary_domain_key: str | None) -> list[dict[str, Any]]:
+        domain_hints: dict[str, tuple[str, str, int, tuple[str, ...]]] = {
+            HOUSING_DOMAIN.key: ("房價預測", "regression", 88, ("saleprice", "median_house_value", "price", "房價")),
+            CUSTOMER_DOMAIN.key: ("客戶行為預測", "classification", 84, ("churn", "retention", "segment", "流失", "留存")),
+            FINANCIAL_DOMAIN.key: ("價格或趨勢分析", "time_series", 86, ("close", "adjusted_close", "price")),
+            SALES_DOMAIN.key: ("銷售績效預測", "regression", 84, ("sales", "revenue", "profit", "quantity", "營收", "銷售", "利潤")),
+            SPORTS_DOMAIN.key: ("體育表現分析", "regression", 74, ("points", "assists", "rebounds", "score")),
+        }
+        spec = domain_hints.get(str(primary_domain_key))
+        if not spec:
+            return []
+        purpose, task_type, base_score, hints = spec
+        recommendations: list[dict[str, Any]] = []
+        for column in df.columns:
+            column_name = str(column)
+            normalized = _normalize_name(column_name)
+            if _is_unsafe_target_name(normalized):
+                continue
+            if any(hint in normalized for hint in hints):
+                task = self._infer_task_type(df[column], preferred=task_type)
+                recommendations.append(
+                    _target_payload(
+                        column=column_name,
+                        task_type=task,
+                        confidence_score=base_score,
+                        purpose=purpose,
+                        reasons=["欄位名稱符合資料主題", "資料型態可作為目標", "仍需依使用者問題確認"],
+                    )
+                )
+        return recommendations
+
+    def _generic_targets(self, df: pd.DataFrame) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for column in df.columns:
+            column_name = str(column)
+            normalized = _normalize_name(column_name)
+            if _is_unsafe_target_name(normalized):
+                continue
+            series = df[column].dropna()
+            if series.empty:
+                continue
+            task_type = self._infer_task_type(series)
+            score = 42
+            reasons = ["欄位型態可用於分析", "需由使用者確認是否符合問題"]
+            if pd.api.types.is_numeric_dtype(series):
+                score += 16
+                reasons.append("連續數值欄位")
+            elif 2 <= series.nunique() <= min(30, max(3, int(len(series) * 0.3))):
+                score += 18
+                reasons.append("類別數量合理")
+            if any(keyword in normalized for keyword in ("target", "label", "price", "sales", "revenue", "profit", "amount", "value", "score", "species")):
+                score += 12
+                reasons.append("欄位名稱帶有目標語意")
+            if score >= 58:
+                candidates.append(
+                    _target_payload(
+                        column=column_name,
+                        task_type=task_type,
+                        confidence_score=min(82, score),
+                        purpose="自訂目標欄位",
+                        reasons=reasons,
+                    )
+                )
+        return sorted(candidates, key=lambda item: (-int(item["confidence_score"]), str(item["column"])))
+
+    @staticmethod
+    def _infer_task_type(series: pd.Series, preferred: str | None = None) -> str:
+        if preferred == "time_series":
+            return "time_series"
+        non_null = series.dropna()
+        if non_null.empty:
+            return preferred or "regression"
+        unique_count = int(non_null.nunique(dropna=True))
+        if not pd.api.types.is_numeric_dtype(non_null) or (2 <= unique_count <= min(20, max(3, int(len(non_null) * 0.2)))):
+            return "classification" if preferred != "regression" else "regression"
+        return "regression"
+
+
+class DatasetStoryGenerator:
+    def generate(
+        self,
+        *,
+        df: pd.DataFrame,
+        file_name: str,
+        primary_domain: dict[str, Any],
+        date_columns: list[str],
+        numeric_columns: list[str],
+        categorical_columns: list[str],
+        target_recommendations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        key = str(primary_domain.get("key") or "")
+        top_target = str(target_recommendations[0].get("column")) if target_recommendations else ""
+        row_count = int(len(df))
+        column_count = int(df.shape[1])
+        if key == IRIS_DOMAIN.key:
+            return {
+                "one_sentence": f"這份資料記錄 {row_count:,} 筆鳶尾花樣本，最適合先用「{top_target or 'Species'}」預測花朵品種。",
+                "what_is_this": "這是經典鳶尾花分類資料集，包含花萼與花瓣的長寬量測，以及每筆樣本的花朵品種。",
+                "contains": ["花萼長度", "花萼寬度", "花瓣長度", "花瓣寬度", "花朵品種"],
+                "can_answer": ["哪些特徵最能區分花朵品種？", "是否能根據花萼與花瓣量測預測 Species？", "花瓣長寬與品種之間有多強的關係？"],
+                "cannot_answer": ["金融分析", "時間序列預測", "股票技術分析", "真實野外族群的因果推論"],
+            }
+        if key == AI_LLM_DOMAIN.key:
+            return {
+                "one_sentence": "這份資料較像 AI/LLM 模型評估資料，可用來理解模型能力、成本、價格與發布趨勢。",
+                "what_is_this": "資料包含模型、benchmark、參數量、公司、發布日期、訓練成本或 API 價格等語意欄位。",
+                "contains": _story_column_groups(numeric_columns, categorical_columns, date_columns),
+                "can_answer": ["哪些模型或公司在 benchmark 表現較好？", "模型能力是否隨參數量或訓練成本增加？", "API 價格是否隨時間下降？"],
+                "cannot_answer": ["體育表現分析", "RSI/MACD/VaR 金融技術分析", "未定義目標欄位時的可靠 AutoML 結論"],
+            }
+        if key == FINANCIAL_DOMAIN.key:
+            return {
+                "one_sentence": "這份資料具備金融時間序列特徵，可先檢查價格、成交量與時間趨勢。",
+                "what_is_this": "資料包含日期與價格欄位，適合做趨勢、報酬、波動與基礎時間序列分析。",
+                "contains": _story_column_groups(numeric_columns, categorical_columns, date_columns),
+                "can_answer": ["價格是否呈現趨勢？", "波動是否增加？", "哪些期間變化最明顯？"],
+                "cannot_answer": ["沒有外部事件與基本面資料時，不能作為投資建議。"],
+            }
+        labels = {
+            HOUSING_DOMAIN.key: ("房價預測資料", ["哪些因素與房價最相關？", "是否能預測價格區間？"], ["不能直接證明地區或坪數造成價格變化。"]),
+            CUSTOMER_DOMAIN.key: ("客戶行為資料", ["哪些客戶特徵與流失、消費或分群相關？", "哪些客群需要優先追蹤？"], ["不能在沒有同意與合規審查下做敏感個資決策。"]),
+            SALES_DOMAIN.key: ("銷售績效資料", ["哪些產品、地區或期間帶動營收？", "是否能預測銷售或利潤？"], ["不能單靠內部表格推論市場總需求。"]),
+            SPORTS_DOMAIN.key: ("體育表現資料", ["哪些球員或球隊指標與表現相關？", "是否能建立排名或分群？"], ["不能把 score 以外的任意數值當成勝負原因。"]),
+        }
+        subject, can_answer, cannot_answer = labels.get(
+            key,
+            ("待確認資料", ["資料有哪些欄位與缺失值？", "哪些欄位可能適合作為分析目標？"], ["尚未確認業務語意前，不適合直接做決策。"]),
+        )
+        return {
+            "one_sentence": f"這份資料看起來像{subject}，共有 {row_count:,} 筆與 {column_count:,} 欄；建議先確認分析目標。",
+            "what_is_this": f"系統根據檔名「{file_name}」與欄位語意判斷，這份資料目前最接近{subject}。",
+            "contains": _story_column_groups(numeric_columns, categorical_columns, date_columns),
+            "can_answer": can_answer,
+            "cannot_answer": cannot_answer,
+        }
+
+
+def build_dataset_understanding(df: pd.DataFrame, file_name: str) -> dict[str, Any]:
+    return DataUnderstandingEngine().analyze(df, file_name)
 
 
 def recommend_target_columns_for_purpose(
@@ -196,90 +646,86 @@ def recommend_target_columns_for_purpose(
     *,
     primary_domain_key: str | None = None,
 ) -> list[dict[str, Any]]:
-    recommendations: list[dict[str, Any]] = []
-    columns = [str(column) for column in df.columns]
-
-    if primary_domain_key == AI_LLM_DOMAIN.key:
-        purpose_map = (
-            (
-                "預測模型能力",
-                ("score", "score_pct", "benchmark_score"),
-                "適合在確認 benchmark 定義後，用來比較模型能力或建立能力預測。",
-            ),
-            (
-                "預測訓練成本",
-                ("training_cost", "training_cost_usd", "gpu_hours", "flops", "energy", "co2"),
-                "適合分析訓練成本、算力與環境成本的變化。",
-            ),
-            (
-                "API 價格分析",
-                ("input_usd", "output_usd", "blended_usd", "price_per_million", "tokens"),
-                "適合分析 API 價格與 token 成本變化。",
-            ),
-            (
-                "時間趨勢分析",
-                ("release_date", "date", "year_month", "timestamp", "release_year"),
-                "適合建立模型發布、能力突破或價格變化時間軸。",
-            ),
-        )
-        for purpose, hints, reason in purpose_map:
-            matched = [
-                column for column in columns
-                if any(hint in _normalize_name(column) for hint in hints)
-            ]
-            if matched:
-                recommendations.append(
-                    {
-                        "purpose": purpose,
-                        "columns": matched[:5],
-                        "confidence": "medium" if purpose == "預測模型能力" else "high",
-                        "reason": reason,
-                    }
-                )
-        return recommendations
-
-    generic_candidates: list[tuple[int, str, str]] = []
-    for column in df.columns:
-        column_name = str(column)
-        normalized = _normalize_name(column_name)
-        if _is_unsafe_target_name(normalized):
-            continue
-        series = df[column].dropna()
-        if series.empty:
-            continue
-        score = 0
-        if pd.api.types.is_numeric_dtype(series):
-            score += 30
-            if series.nunique() > min(10, max(3, int(len(series) * 0.3))):
-                score += 10
-        elif 2 <= series.nunique() <= 20:
-            score += 20
-        if any(keyword in normalized for keyword in ("target", "label", "price", "sales", "revenue", "profit", "risk", "amount", "value")):
-            score += 20
-        if score >= 25:
-            generic_candidates.append((score, column_name, "欄位型態與名稱看起來可作為分析目標，但仍需使用者確認。"))
-
-    generic_candidates.sort(key=lambda item: (-item[0], item[1]))
-    if not generic_candidates:
-        return []
-
-    return [
-        {
-            "purpose": "自訂目標欄位",
-            "columns": [column for _, column, _ in generic_candidates[:5]],
-            "confidence": "low",
-            "reason": "目前無法自動判斷可靠目標欄位，建議先做資料探索或手動選擇目標。",
-        }
-    ]
+    return TargetRecommendationEngine().recommend(df, primary_domain_key=primary_domain_key)
 
 
 def recommended_target_column_names(understanding: dict[str, Any]) -> list[str]:
     names: list[str] = []
     for item in understanding.get("target_recommendations") or []:
-        for column in item.get("columns") or []:
-            if isinstance(column, str) and column not in names:
-                names.append(column)
+        column = item.get("column")
+        if isinstance(column, str) and column not in names:
+            names.append(column)
+            continue
+        for grouped_column in item.get("columns") or []:
+            if isinstance(grouped_column, str) and grouped_column not in names:
+                names.append(grouped_column)
     return names[:5]
+
+
+def _confidence_component(key: str, label: str, value: int | float, reason: str) -> dict[str, Any]:
+    numeric_value = int(round(value))
+    return {
+        "key": key,
+        "label": label,
+        "value": numeric_value,
+        "display": f"{'+' if numeric_value >= 0 else ''}{numeric_value}",
+        "reason": reason,
+    }
+
+
+def _target_payload(
+    *,
+    column: str,
+    task_type: str,
+    confidence_score: int,
+    purpose: str,
+    reasons: list[str],
+) -> dict[str, Any]:
+    task_label_map = {
+        "classification": "分類",
+        "regression": "回歸",
+        "time_series": "時間趨勢",
+        "clustering": "分群",
+    }
+    score = int(max(0, min(100, confidence_score)))
+    return {
+        "column": column,
+        "columns": [column],
+        "purpose": purpose,
+        "task_type": task_type,
+        "task_type_label": task_label_map.get(task_type, task_type),
+        "confidence_score": score,
+        "confidence": "high" if score >= 80 else "medium" if score >= 65 else "low",
+        "reasons": reasons,
+        "reason": "；".join(reasons),
+    }
+
+
+def _dedupe_target_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_column: dict[str, dict[str, Any]] = {}
+    for item in candidates:
+        column = str(item.get("column") or "")
+        if not column:
+            continue
+        existing = by_column.get(column)
+        if existing is None or int(item.get("confidence_score") or 0) > int(existing.get("confidence_score") or 0):
+            by_column[column] = item
+    return sorted(by_column.values(), key=lambda item: (-int(item.get("confidence_score") or 0), str(item.get("column"))))
+
+
+def _story_column_groups(
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+    date_columns: list[str],
+) -> list[str]:
+    groups: list[str] = []
+    if numeric_columns:
+        groups.append(f"數值欄位：{', '.join(numeric_columns[:6])}")
+    if categorical_columns:
+        groups.append(f"類別欄位：{', '.join(categorical_columns[:6])}")
+    if date_columns:
+        groups.append(f"日期欄位：{', '.join(date_columns[:4])}")
+    return groups or ["欄位語意仍需人工確認"]
 
 
 def plan_multi_table_strategy(datasets: list[tuple[str, pd.DataFrame]]) -> dict[str, Any]:
@@ -553,6 +999,13 @@ def _not_suitable_reasons(
 
 
 def _recommended_analysis_goals(primary_domain_key: str) -> list[dict[str, str]]:
+    if primary_domain_key == IRIS_DOMAIN.key:
+        return [
+            {"key": "species_classification", "label": "花朵品種分類"},
+            {"key": "feature_importance", "label": "花萼與花瓣特徵重要性"},
+            {"key": "measurement_relationship", "label": "花瓣與花萼量測關係"},
+            {"key": "model_comparison", "label": "分類模型比較"},
+        ]
     if primary_domain_key == AI_LLM_DOMAIN.key:
         return [
             {"key": "ai_model_overview", "label": "模型基本概況"},
@@ -566,6 +1019,30 @@ def _recommended_analysis_goals(primary_domain_key: str) -> list[dict[str, str]]
         return [
             {"key": "financial_technical_analysis", "label": "金融技術分析"},
             {"key": "trend_analysis", "label": "時間趨勢分析"},
+        ]
+    if primary_domain_key == HOUSING_DOMAIN.key:
+        return [
+            {"key": "price_prediction", "label": "房價預測"},
+            {"key": "feature_importance", "label": "房價關鍵因素"},
+            {"key": "regional_comparison", "label": "地區比較"},
+        ]
+    if primary_domain_key == CUSTOMER_DOMAIN.key:
+        return [
+            {"key": "customer_segmentation", "label": "客戶分群"},
+            {"key": "churn_prediction", "label": "流失或留存預測"},
+            {"key": "behavior_drivers", "label": "客戶行為關鍵因素"},
+        ]
+    if primary_domain_key == SALES_DOMAIN.key:
+        return [
+            {"key": "sales_performance", "label": "銷售績效分析"},
+            {"key": "revenue_prediction", "label": "營收或銷售預測"},
+            {"key": "product_region_drivers", "label": "產品與地區貢獻分析"},
+        ]
+    if primary_domain_key == SPORTS_DOMAIN.key:
+        return [
+            {"key": "performance_ranking", "label": "球員或球隊表現排名"},
+            {"key": "clustering", "label": "表現分群"},
+            {"key": "metric_drivers", "label": "關鍵表現指標"},
         ]
     return [
         {"key": "eda", "label": "資料探索"},

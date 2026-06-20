@@ -40,6 +40,11 @@ export function useReadingDepth() {
 
   useEffect(() => {
     const stored = window.localStorage.getItem(readingDepthStorageKey);
+    if (stored === "standard") {
+      setDepthState("simple");
+      window.localStorage.setItem(readingDepthStorageKey, "simple");
+      return;
+    }
     if (isReadingDepth(stored)) {
       setDepthState(stored);
     }
@@ -84,18 +89,13 @@ export function ReadingDepthControl({ compact = false }: { compact?: boolean }) 
   const options: Array<{ value: ReadingDepth; label: string; description: string }> = [
     {
       value: "simple",
-      label: text("簡明", "Simple"),
-      description: text("先看結論與下一步", "Conclusion and next step")
-    },
-    {
-      value: "standard",
-      label: text("標準", "Standard"),
-      description: text("加入證據與圖表讀法", "Evidence and chart reading")
+      label: text("一般人模式", "Plain mode"),
+      description: text("一句話結論、發生什麼、風險與下一步", "Conclusion, what happened, risk, and next step")
     },
     {
       value: "research",
-      label: text("研究", "Research"),
-      description: text("顯示方法、參數與限制", "Methods, parameters, limits")
+      label: text("研究模式", "Research mode"),
+      description: text("顯示 R²、RMSE、MAE、特徵重要性、方法與參數", "Show R², RMSE, MAE, feature importance, methods, and parameters")
     }
   ];
 

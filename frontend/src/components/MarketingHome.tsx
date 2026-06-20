@@ -24,31 +24,27 @@ import { useLocale } from "@/components/LocaleProvider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-const journeyIcons = [Database, TableProperties, BrainCircuit, Sparkles, FileText];
+const journeyIcons = [Database, TableProperties, BrainCircuit, Sparkles];
 
 export function MarketingHome() {
   const { text, path } = useLocale();
   const [activeJourney, setActiveJourney] = useState(0);
   const journey = [
     {
-      title: text("加入資料", "Add data"),
-      detail: text("CSV、Excel、JSON 與多檔批次", "CSV, Excel, JSON, and multi-file batches")
+      title: text("上傳資料", "Upload data"),
+      detail: text("CSV、Excel、JSON 與多檔批次都會先分表理解", "CSV, Excel, JSON, and multi-file batches are understood table by table")
     },
     {
-      title: text("理解結構", "Understand structure"),
-      detail: text("欄位、缺失值與摘要", "Columns, missing values, and summaries")
+      title: text("理解資料", "Understand data"),
+      detail: text("辨識資料主題、目標欄位、品質與限制", "Detect dataset topic, targets, quality, and limits")
     },
     {
-      title: text("選擇方法", "Choose a method"),
-      detail: text("自動推薦或手動控制", "Automatic recommendations or manual control")
+      title: text("產生洞察", "Generate insight"),
+      detail: text("把圖表與模型結果翻譯成一般人看得懂的結論", "Translate charts and model results into readable conclusions")
     },
     {
-      title: text("找到重點", "Find what matters"),
-      detail: text("最佳結果、依據與限制", "Best result, evidence, and limits")
-    },
-    {
-      title: text("完成交付", "Deliver the work"),
-      detail: text("圖表、程式碼與報告", "Charts, code, and reports")
+      title: text("做出決策", "Make a decision"),
+      detail: text("整理風險、機會與下一步行動", "Organize risks, opportunities, and next actions")
     }
   ];
 
@@ -60,11 +56,11 @@ export function MarketingHome() {
         <ScrollReveal>
           <div className="marketing-section-heading">
             <span>{text("分析旅程", "Analysis journey")}</span>
-            <h2>{text("從資料到下一步，一條清楚的分析旅程。", "A clear path from raw data to the next action.")}</h2>
+            <h2>{text("從資料到決策，一個工作區完成。", "From data to decisions, in one workspace.")}</h2>
             <p>
               {text(
-                "每個階段只回答一個問題，讓你先理解，再選擇，最後才進入完整技術細節。",
-                "Each stage answers one question, so you understand first, choose second, and only then open the technical detail."
+                "產品會先用人話解釋資料，再讓你進入圖表、模型與報告細節；不用先懂資料科學也能開始。",
+                "The product explains data in plain language before charts, models, and reports, so you can start without being a data scientist."
               )}
             </p>
           </div>

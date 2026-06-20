@@ -168,22 +168,54 @@ function UnderstandingSummary({ result }: { result: DatasetAnalysis }) {
   const goals = result.recommended_analysis_goals ?? result.understanding?.recommended_analysis_goals ?? [];
   const reasons = result.not_suitable_reasons ?? result.understanding?.not_suitable_reasons ?? [];
   const targetRecommendations = result.target_recommendations ?? result.understanding?.target_recommendations ?? [];
+  const story = result.dataset_story ?? result.understanding?.dataset_story;
+  const confidenceBreakdown = result.confidence_breakdown ?? result.understanding?.confidence_breakdown;
   return (
     <section className="understanding-summary-card" aria-labelledby="understanding-summary-title">
       <div className="section-title-row">
         <div>
           <span>{text("資料理解", "Data understanding")}</span>
           <h3 id="understanding-summary-title">
-            {domain?.label ?? text("一般表格資料", "General tabular data")}
+            {domain?.label ?? text("待確認資料集", "Dataset needs review")}
           </h3>
         </div>
         <Badge variant="outline">
           {typeof result.confidence_score === "number"
-            ? `${result.confidence_score}%`
+            ? text(`可信度 ${result.confidence_score}`, `Confidence ${result.confidence_score}`)
             : text("需確認", "Review")}
         </Badge>
       </div>
+      {story?.one_sentence ? <p className="understanding-lead">{story.one_sentence}</p> : null}
+      {confidenceBreakdown?.components?.length ? (
+        <details className="confidence-breakdown">
+          <summary>{text("查看可信度計算依據", "View confidence calculation")}</summary>
+          <p>{confidenceBreakdown.formula}</p>
+          <dl>
+            {confidenceBreakdown.components.map((component) => (
+              <div key={component.key ?? component.label}>
+                <dt>{component.label}</dt>
+                <dd>
+                  <strong>{component.display ?? component.value}</strong>
+                  <span>{component.reason}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      ) : null}
       <div className="understanding-grid">
+        {story ? (
+          <div>
+            <strong>{text("這份資料能回答什麼", "What this can answer")}</strong>
+            <ul className="compact-explain-list">
+              {(story.can_answer ?? []).slice(0, 4).map((item) => (
+                <li key={item}>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div>
           <strong>{text("建議分析方向", "Recommended directions")}</strong>
           {goals.length > 0 ? (
@@ -197,13 +229,23 @@ function UnderstandingSummary({ result }: { result: DatasetAnalysis }) {
           )}
         </div>
         <div>
-          <strong>{text("目標欄位建議", "Target suggestions")}</strong>
+          <strong>{text("目標欄位 Top 5", "Top 5 target columns")}</strong>
           {targetRecommendations.length > 0 ? (
             <ul className="compact-explain-list">
-              {targetRecommendations.slice(0, 3).map((recommendation) => (
-                <li key={recommendation.purpose}>
-                  <span>{recommendation.purpose}</span>
-                  <small>{recommendation.columns?.join("、")}</small>
+              {targetRecommendations.slice(0, 5).map((recommendation) => (
+                <li key={`${recommendation.column ?? recommendation.purpose}-${recommendation.task_type}`}>
+                  <span>
+                    {recommendation.column ?? recommendation.columns?.join("、")}
+                    {recommendation.confidence_score ? (
+                      <Badge variant="secondary">
+                        {text(`${recommendation.confidence_score}%`, `${recommendation.confidence_score}%`)}
+                      </Badge>
+                    ) : null}
+                  </span>
+                  <small>
+                    {recommendation.task_type_label ?? recommendation.purpose}
+                    {recommendation.reason ? `｜${recommendation.reason}` : ""}
+                  </small>
                 </li>
               ))}
             </ul>
@@ -211,6 +253,18 @@ function UnderstandingSummary({ result }: { result: DatasetAnalysis }) {
             <p>{text("目前無法自動判斷可靠目標欄位。", "No reliable target column was detected automatically.")}</p>
           )}
         </div>
+        {story?.cannot_answer?.length ? (
+          <div>
+            <strong>{text("不適合直接回答", "Not suitable for")}</strong>
+            <ul className="compact-explain-list">
+              {story.cannot_answer.slice(0, 4).map((item) => (
+                <li key={item}>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
       {reasons.length > 0 ? (
         <InlineNotice tone="warning" title={text("不適合直接執行", "Do not run directly")}>

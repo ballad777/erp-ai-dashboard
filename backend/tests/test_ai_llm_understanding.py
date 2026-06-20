@@ -83,7 +83,7 @@ def test_ai_llm_tables_are_not_sports_or_financial() -> None:
         understanding = build_dataset_understanding(df, file_name=file_name)
 
         assert understanding["primary_domain"]["key"] == "ai_llm"
-        assert understanding["primary_domain"]["label"] == "AI / LLM 模型發展資料"
+        assert understanding["primary_domain"]["label"] == "AI/LLM模型評估資料集"
         assert understanding["financial_eligibility"]["eligible"] is False
         assert "sports" not in [topic["key"] for topic in understanding["possible_data_topics"][:1]]
 

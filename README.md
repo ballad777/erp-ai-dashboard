@@ -49,6 +49,12 @@ WorkspaceProvider 會使用 IndexedDB 保存目前瀏覽器中的本機檔案、
 
 系統現在先做資料理解，再決定是否適合合併、建模或金融分析。多檔上傳不會預設垂直合併；後端會先判斷 Union、Join、多表關聯或保持分表分析。AI / LLM 模型資料會被辨識為模型發展資料，不會因為有 `score` 就被當成體育資料，也不會因為有 `release_date` 與數值欄位就產生 RSI、MACD、VaR 或回測。
 
+`DataUnderstandingEngine` 目前會辨識鳶尾花分類、房價預測、客戶行為、金融時間序列、AI/LLM 模型評估與銷售績效資料；若證據不足，會顯示「待確認資料集」，不再用沒有決策價值的「一般表格資料」當結論。`TargetRecommendationEngine` 會回傳 Top 5 目標欄位候選，包含任務類型、推薦原因與可信度分數；Iris 資料會優先推薦 `Species` 作為分類目標。
+
+可信度分數會附上計算依據，包含資料完整度、缺失值品質、樣本量、欄位品質、異常值調整與一致性。前端預設為「一般人模式」，顯示一句話結論、發生什麼、為什麼重要、風險與下一步；切到「研究模式」才顯示 R²、RMSE、MAE、特徵重要性、方法與參數。
+
+模型圖表使用 `FeatureNameResolver` 追蹤原始欄位到特徵工程後名稱。One-hot 欄位會顯示成 `Country=USA`，不可解析時會跳過特徵重要性圖，不會輸出 `欄位 109`、`feature_5` 或 `column_5` 這類假名稱。
+
 金融分析必須同時具備日期欄位與金融價格欄位，例如 `close`、`price`、`open`、`high`、`low` 或 `adjusted_close`。若資料不符合金融時間序列，API 會回傳明確錯誤與替代分析建議。
 
 模型訓練預設不保存完整 sklearn pipeline、RandomForest、ExtraTrees 或 AutoML 物件。一般分析只保留：

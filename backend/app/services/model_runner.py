@@ -48,6 +48,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from app.services.artifact_access import create_artifact_url
 from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes, read_uploaded_dataframe
+from app.services.feature_name_resolver import FeatureNameResolver
 from app.services.insight_narrative import build_model_brief, enrich_model_option
 from app.services.analysis_progress import (
     CancelCheck,
@@ -1908,11 +1909,7 @@ def _create_residual_plot(
 
 
 def _get_feature_names(model: Pipeline) -> list[str]:
-    preprocessor = model.named_steps["preprocess"]
-    try:
-        return [str(name).replace("numeric__", "").replace("categorical__", "") for name in preprocessor.get_feature_names_out()]
-    except Exception:  # noqa: BLE001 - fallback only for feature-name compatibility
-        return []
+    return FeatureNameResolver().resolve_pipeline(model)
 
 
 def _problem_type_label(problem_type: str) -> str:

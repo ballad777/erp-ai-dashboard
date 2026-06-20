@@ -3776,3 +3776,116 @@ npm run build
 - 若要公開給更多人壓測，建議把模型/報告流程拆到背景 worker 與持久化 job queue。
 - 補 Playwright 或 Browser MCP 自動化環境後，加入桌機與手機 RWD 上傳流程截圖測試。
 - 將 AI/LLM 專用圖表模板延伸到專門的模型能力、成本、價格與里程碑 dashboard。
+
+---
+
+## 2026-06-20：資料理解與解釋引擎重構
+
+### 已完成檔案
+
+- `backend/app/services/data_understanding.py`
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/services/feature_name_resolver.py`
+- `backend/app/services/insight_narrative.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/schemas.py`
+- `backend/tests/test_data_understanding_engines.py`
+- `backend/tests/test_ai_llm_understanding.py`
+- `frontend/src/components/AnalysisResult.tsx`
+- `frontend/src/components/DataLensHero.tsx`
+- `frontend/src/components/InsightExplainers.tsx`
+- `frontend/src/components/MarketingHome.tsx`
+- `frontend/src/lib/api.ts`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/__tests__/DataLensHero.test.tsx`
+- `frontend/src/components/__tests__/InsightExplainers.test.tsx`
+- `README.md`
+
+### 新增功能
+
+- 建立 `DataUnderstandingEngine`：
+  - 可辨識鳶尾花分類資料集、房價預測資料集、客戶行為分析資料集、金融時間序列資料集、AI/LLM 模型評估資料集、銷售績效資料集。
+  - 不再把未判斷資料直接稱為「一般表格資料」，改以「待確認資料集」保守呈現。
+- 建立 `TargetRecommendationEngine`：
+  - 回傳 Top 5 目標欄位候選。
+  - 每個候選包含欄位、任務類型、推薦原因與可信度分數。
+  - Iris 資料第一推薦為 `Species`，其次為 `PetalLengthCm`、`PetalWidthCm`、`SepalLengthCm`、`SepalWidthCm`。
+- 新增可信度拆解：
+  - 資料完整度
+  - 缺失值品質
+  - 樣本量
+  - 欄位品質
+  - 異常值調整
+  - 一致性
+- 建立 `DatasetStoryGenerator`：
+  - 自動產生「這份資料是什麼」、「能回答什麼」、「不適合回答什麼」。
+- 建立 `FeatureNameResolver`：
+  - 特徵重要性會保留真實欄位名稱。
+  - One-hot 欄位會顯示為 `Country=USA`、`Country=Taiwan`。
+  - 禁止輸出 `欄位 109`、`feature_5`、`column_5` 等不可解釋名稱。
+- 建立 `ModelNarrator` 與 `ChartStoryEngine`：
+  - 模型結論改成「發生什麼、為什麼重要、風險、下一步」。
+  - 圖表說明改成以實際模型、baseline、目標欄位與限制生成。
+- 報告章節擴充為 12 段：
+  - 執行摘要、資料介紹、資料品質、分析目標、分析方法、最佳模型、模型解讀、圖表解讀、商業意義、風險分析、建議行動、結論。
+- 前端新增：
+  - 可信度計算依據展開區。
+  - Top 5 目標欄位候選。
+  - 資料故事區塊。
+  - 「一般人模式」與「研究模式」兩種閱讀深度。
+  - 首頁定位改為「從資料到決策，一個工作區完成」。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8002
+
+cd ../frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run dev -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q
+
+cd frontend
+npm run test:run
+npm run build
+```
+
+Iris 驗收：
+
+1. 上傳 `Iris.csv`。
+2. 確認資料類型為「鳶尾花分類資料集」。
+3. 確認第一推薦目標欄位為 `Species`。
+4. 確認 Top 5 目標欄位顯示任務類型、原因與可信度。
+5. 確認可信度可展開計算依據。
+6. 執行模型後確認圖表故事與模型敘事不是通用模板。
+7. 確認特徵重要性不顯示 `欄位 1`、`欄位 5`、`feature_5` 或 `column_5`。
+
+### 本次驗證結果
+
+- `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests/test_data_understanding_engines.py backend/tests/test_ai_llm_understanding.py backend/tests/test_insight_narrative.py -q`：8 passed。
+- `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q`：61 passed。
+- `cd frontend && npm run test:run`：69 passed。
+- `cd frontend && npm run build`：通過。
+- Iris 實際流程 smoke test：
+  - `dataset_type = 鳶尾花分類資料集`
+  - `top_targets = ['Species', 'PetalLengthCm', 'PetalWidthCm', 'SepalLengthCm', 'SepalWidthCm']`
+  - `confidence = 100`，組成為 `+30 +25 +20 +10 +0 +15`
+  - 模型敘事開頭為「系統把這次任務判定為鳶尾花品種分類...」
+  - 圖表故事與模型比較皆由本次真實模型分析產生。
+
+### Known Issues
+
+- 可信度分數目前是透明規則分數，不是機率模型；分數高代表資料輪廓乾淨且語意一致，不代表模型一定可上線。
+- Iris smoke test 使用本地建立的 Iris 結構資料；若使用不同欄位命名，系統仍會依欄位語意重新判斷。
+- 目前尚未新增 Playwright 瀏覽器自動截圖測試；已用後端測試、前端測試與 production build 驗證。
+
+### 下一階段要做什麼
+
+- 為房價、客戶、銷售、金融與 AI/LLM 樣本各補一組資料理解 fixture。
+- 將特徵重要性資料另存為 CSV，讓前端可直接顯示前 10 名欄位與理由。
+- 報告中心可再加入「只看決策摘要 / 顯示完整研究附錄」切換。

@@ -8477,6 +8477,65 @@ details[open] > summary .disclosure-chevron {
   gap: 1rem;
 }
 
+.understanding-lead {
+  margin: 0;
+  color: rgb(var(--color-ink));
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.65;
+}
+
+.confidence-breakdown {
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-card);
+  background: rgb(var(--color-surface) / .72);
+  padding: .8rem .9rem;
+}
+
+.confidence-breakdown summary {
+  cursor: pointer;
+  color: rgb(var(--color-ink));
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.confidence-breakdown p {
+  margin: .55rem 0 .7rem;
+}
+
+.confidence-breakdown dl {
+  display: grid;
+  gap: .45rem;
+  margin: 0;
+}
+
+.confidence-breakdown dl > div {
+  display: grid;
+  grid-template-columns: minmax(100px, .35fr) 1fr;
+  gap: .7rem;
+  align-items: start;
+}
+
+.confidence-breakdown dt {
+  color: rgb(var(--color-muted));
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.confidence-breakdown dd {
+  display: grid;
+  gap: .15rem;
+  margin: 0;
+  color: rgb(var(--color-muted));
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.confidence-breakdown dd strong {
+  color: rgb(var(--color-ink));
+  font-size: 13px;
+}
+
 .understanding-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8512,6 +8571,10 @@ details[open] > summary .disclosure-chevron {
 }
 
 .compact-explain-list span {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  flex-wrap: wrap;
   color: rgb(var(--color-ink));
   font-size: 13px;
   font-weight: 800;

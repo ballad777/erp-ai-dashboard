@@ -37,22 +37,22 @@ export function DataLensHero() {
         <div className="data-lens-copy">
           <span className="data-lens-eyebrow">
             {text(
-              "通用型 AI 資料分析平台",
-              "Universal AI analytics platform"
+              "給一般人使用的 AI 分析工作區",
+              "An AI analysis workspace for everyone"
             )}
           </span>
           <h1>
             <span data-hero-line className="whitespace-nowrap">
-              {text("看懂資料", "Understand data")}
+              {text("從資料到決策", "From data to decisions")}
             </span>
             <span data-hero-line className="whitespace-nowrap">
-              {text("找到下一步", "Find the next step")}
+              {text("一個工作區完成", "In one workspace")}
             </span>
           </h1>
           <p>
             {text(
-              "上傳資料，系統會理解結構、找出重點並推薦合適的分析方法，讓每個結果都能繼續往下操作。",
-              "Upload data, understand its structure, surface what matters, and turn every result into a clear next action."
+              "上傳資料，系統先理解資料、解釋重點，再把圖表、模型與報告整理成清楚的下一步。",
+              "Upload data, let the system understand it, explain what matters, then turn charts, models, and reports into the next step."
             )}
           </p>
           <div className="data-lens-actions">
@@ -70,8 +70,8 @@ export function DataLensHero() {
           </div>
           <div className="data-lens-proof">
             <span>{text("真實 Python 分析", "Real Python analysis")}</span>
-            <span>{text("多檔資料整合", "Multi-file workflows")}</span>
-            <span>{text("結果可下載", "Downloadable outputs")}</span>
+            <span>{text("先解釋再建模", "Explain before modeling")}</span>
+            <span>{text("報告可直接閱讀", "Readable reports")}</span>
           </div>
         </div>
 

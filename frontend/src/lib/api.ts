@@ -26,6 +26,26 @@ export type Confidence = {
   blocking_issues?: string[];
 };
 
+export type ConfidenceBreakdown = {
+  score?: number;
+  formula?: string;
+  components?: Array<{
+    key?: string;
+    label?: string;
+    value?: number;
+    display?: string;
+    reason?: string;
+  }>;
+};
+
+export type DatasetStory = {
+  one_sentence?: string;
+  what_is_this?: string;
+  contains?: string[];
+  can_answer?: string[];
+  cannot_answer?: string[];
+};
+
 export type EvidenceItem = {
   label?: string;
   value?: string;
@@ -91,6 +111,9 @@ export type DatasetAnalysis = {
   possible_data_topics?: DataTopic[];
   dataset_type?: DataTopic;
   confidence_score?: number | null;
+  domain_confidence_score?: number | null;
+  confidence_breakdown?: ConfidenceBreakdown;
+  dataset_story?: DatasetStory;
   recommended_analysis_goals?: Array<{ key?: string; label?: string }>;
   target_recommendations?: TargetRecommendation[];
   financial_eligibility?: {
@@ -110,9 +133,14 @@ export type DataTopic = {
 };
 
 export type TargetRecommendation = {
+  column?: string;
   purpose?: string;
   columns?: string[];
+  task_type?: string;
+  task_type_label?: string;
   confidence?: string;
+  confidence_score?: number;
+  reasons?: string[];
   reason?: string;
 };
 
@@ -131,6 +159,9 @@ export type DatasetUnderstanding = {
   possible_data_topics?: DataTopic[];
   primary_domain?: DataTopic;
   confidence_score?: number;
+  domain_confidence_score?: number;
+  confidence_breakdown?: ConfidenceBreakdown;
+  dataset_story?: DatasetStory;
   not_suitable_reasons?: string[];
   recommended_analysis_goals?: Array<{ key?: string; label?: string }>;
   target_recommendations?: TargetRecommendation[];

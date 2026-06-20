@@ -484,11 +484,15 @@ def _attach_understanding(summary: dict[str, Any], *, df: pd.DataFrame, file_nam
     summary["possible_data_topics"] = understanding["possible_data_topics"]
     summary["dataset_type"] = understanding["primary_domain"]
     summary["confidence_score"] = understanding["confidence_score"]
+    summary["domain_confidence_score"] = understanding.get("domain_confidence_score")
+    summary["confidence_breakdown"] = understanding.get("confidence_breakdown", {})
+    summary["dataset_story"] = understanding.get("dataset_story", {})
     summary["recommended_analysis_goals"] = understanding["recommended_analysis_goals"]
     summary["target_recommendations"] = understanding["target_recommendations"]
     summary["financial_eligibility"] = understanding["financial_eligibility"]
     summary["not_suitable_reasons"] = understanding["not_suitable_reasons"]
     summary["recommended_target_columns"] = recommended_targets
+    summary.update(build_dataset_brief(summary))
     if understanding["primary_domain"].get("key") == "ai_llm":
         summary.update(_build_ai_llm_dataset_brief(summary, understanding))
 
@@ -501,7 +505,7 @@ def _build_ai_llm_dataset_brief(
     column_count = int(summary.get("column_count") or 0)
     goals = [str(item.get("label")) for item in understanding.get("recommended_analysis_goals") or [] if item.get("label")]
     target_reasons = [
-        f"{item.get('purpose')}：{', '.join(str(column) for column in item.get('columns') or [])}"
+        f"{item.get('purpose')}：{item.get('column') or ', '.join(str(column) for column in item.get('columns') or [])}"
         for item in understanding.get("target_recommendations") or []
     ]
     return {

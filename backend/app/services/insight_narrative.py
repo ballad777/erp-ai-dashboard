@@ -19,8 +19,15 @@ def build_dataset_brief(dataset_summary: dict[str, Any]) -> dict[str, Any]:
     columns = [str(column) for column in _as_list(dataset_summary.get("columns"))]
     numeric_columns = list(_as_dict(dataset_summary.get("numeric_summary")).keys())
     date_candidates = _as_list(quality_report.get("date_frequency"))
-    recommended_targets = [str(column) for column in _as_list(dataset_summary.get("recommended_target_columns"))]
-    dataset_kind = _infer_dataset_kind(columns, numeric_columns, date_candidates)
+    target_recommendations = [_as_dict(item) for item in _as_list(dataset_summary.get("target_recommendations"))]
+    recommended_targets = [
+        str(item.get("column"))
+        for item in target_recommendations
+        if item.get("column")
+    ] or [str(column) for column in _as_list(dataset_summary.get("recommended_target_columns"))]
+    dataset_type = _as_dict(dataset_summary.get("dataset_type"))
+    dataset_story = _as_dict(dataset_summary.get("dataset_story"))
+    dataset_kind = str(dataset_type.get("label") or _infer_dataset_kind(columns, numeric_columns, date_candidates))
     missing = _as_dict(quality_report.get("missing"))
     missing_columns = _as_list(missing.get("columns"))
     completeness = _dataset_completeness(row_count, column_count, int(missing.get("total_cells") or 0))
@@ -30,7 +37,7 @@ def build_dataset_brief(dataset_summary: dict[str, Any]) -> dict[str, Any]:
     else:
         target_sentence = "系統尚未偵測到明確目標欄位，仍可在模型頁手動選擇。"
 
-    headline = (
+    headline = str(dataset_story.get("one_sentence") or "") or (
         f"這份資料看起來偏向「{dataset_kind}」，共有 {row_count:,} 筆與 {column_count:,} 欄；"
         f"{target_sentence}"
     )
@@ -46,10 +53,10 @@ def build_dataset_brief(dataset_summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "plain_summary": {
             "headline": headline,
-            "what_happened": f"系統已完成欄位型態、缺失值、數值摘要與資料品質檢查，並偵測到 {len(numeric_columns)} 個數值欄位。",
-            "why_it_matters": f"這份資料可優先用來做：{'、'.join(suitable_tasks)}。",
-            "risk": risk,
-            "next_action": "先確認建議目標欄位是否符合你的問題，再進入模型或金融分析。",
+            "what_happened": str(dataset_story.get("what_is_this") or f"系統已完成欄位型態、缺失值、數值摘要與資料品質檢查，並偵測到 {len(numeric_columns)} 個數值欄位。"),
+            "why_it_matters": _story_list_sentence(dataset_story.get("can_answer"), fallback=f"這份資料可優先用來做：{'、'.join(suitable_tasks)}。"),
+            "risk": _story_list_sentence(dataset_story.get("cannot_answer"), prefix="目前不適合直接回答：", fallback=risk),
+            "next_action": _dataset_next_action(recommended_targets, dataset_kind),
         },
         "confidence": {
             "level": _confidence_level_from_quality(quality_score, len(quality_issues)),
@@ -71,6 +78,11 @@ def build_dataset_brief(dataset_summary: dict[str, Any]) -> dict[str, Any]:
                 "label": "可用分析",
                 "value": "、".join(suitable_tasks),
                 "source": "欄位型態與日期欄位偵測",
+            },
+            {
+                "label": "資料類型",
+                "value": dataset_kind,
+                "source": "DataUnderstandingEngine",
             },
         ],
         "terms": get_metric_terms(["data_completeness", "missing_values", "mean", "median", "std"]),
@@ -96,6 +108,39 @@ def build_dataset_brief(dataset_summary: dict[str, Any]) -> dict[str, Any]:
             ],
         },
     }
+
+
+class ModelNarrator:
+    def summarize(
+        self,
+        *,
+        dataset_summary: dict[str, Any],
+        model_analysis: dict[str, Any],
+        best_model: dict[str, Any],
+        baseline_model: dict[str, Any] | None,
+        confidence: dict[str, Any],
+        performance: str,
+        next_action: str,
+    ) -> dict[str, str]:
+        dataset_key = str(_as_dict(dataset_summary.get("dataset_type")).get("key") or "")
+        problem_type = str(model_analysis.get("problem_type") or "regression")
+        target_column = str(model_analysis.get("target_column") or "")
+        best_name = str(best_model.get("model_name") or "尚未產生")
+        if dataset_key == "iris_classification":
+            return {
+                "headline": f"系統把這次任務判定為鳶尾花品種分類，最適合先用「{target_column or 'Species'}」驗證模型是否能區分花朵種類。",
+                "what_happened": "系統發現花瓣長度與花瓣寬度通常包含主要分類訊號，因此模型能用量測欄位推估不同鳶尾花品種。",
+                "why_it_matters": f"{performance} 這代表資料內存在清楚可學習的花朵型態差異，而不是模型只記住雜訊。",
+                "risk": "資料僅約 150 筆，且屬於乾淨教學資料；若要套用到真實採集資料，仍需更多樣本與獨立測試集驗證。",
+                "next_action": "先查看特徵重要性是否以 PetalLengthCm、PetalWidthCm 為主，再用錯分樣本確認哪些品種最容易混淆。",
+            }
+        return {
+            "headline": f"系統判定這是「{_problem_type_label(problem_type)}」任務，目前最佳模型是「{best_name}」。",
+            "what_happened": performance,
+            "why_it_matters": "模型比較可以判斷資料中是否存在可學習訊號，而不是只看單一模型分數。",
+            "risk": str(confidence.get("reason") or "仍需確認資料品質與目標欄位定義。"),
+            "next_action": next_action,
+        }
 
 
 def build_model_brief(
@@ -139,15 +184,18 @@ def build_model_brief(
     metric_terms = ["rmse", "mae", "r2", "feature_importance", "residual"]
     if problem_type == "classification":
         metric_terms = ["accuracy", "f1_score", "rmse", "mae", "feature_importance"]
+    plain_summary = ModelNarrator().summarize(
+        dataset_summary=dataset_summary,
+        model_analysis=model_analysis,
+        best_model=best_model,
+        baseline_model=baseline_model,
+        confidence=confidence,
+        performance=performance,
+        next_action=next_action,
+    )
 
     return {
-        "plain_summary": {
-            "headline": f"系統判定這是「{_problem_type_label(problem_type)}」任務，目前最佳模型是「{best_model.get('model_name', '尚未產生')}」。",
-            "what_happened": performance,
-            "why_it_matters": "模型比較可以判斷資料中是否存在可學習訊號，而不是只看單一模型分數。",
-            "risk": confidence["reason"],
-            "next_action": next_action,
-        },
+        "plain_summary": plain_summary,
         "confidence": confidence,
         "evidence": [
             {
@@ -307,36 +355,41 @@ def build_financial_brief(
     }
 
 
+class ChartStoryEngine:
+    def build(self, chart: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, str]:
+        context = context or {}
+        model_analysis = _as_dict(context.get("model_analysis"))
+        financial_analysis = _as_dict(context.get("financial_analysis")) or None
+        best_model = _as_dict(context.get("best_model"))
+        baseline_model = _as_dict(context.get("baseline_model")) or None
+        dataset_summary = _as_dict(context.get("dataset_summary"))
+        outliers = _as_list(_as_dict(dataset_summary.get("quality_report")).get("outliers"))
+        chart_type = str(chart.get("chart_type") or "chart")
+        title = str(chart.get("title") or _chart_title(chart_type))
+        return {
+            "chart_type": chart_type,
+            "title": title,
+            "chart_path": str(chart.get("chart_path") or ""),
+            "chart_url": str(chart.get("chart_url") or ""),
+            "explanation": _chart_explanation(chart_type, title),
+            "key_findings": _chart_key_findings(
+                chart_type=chart_type,
+                model_analysis=model_analysis,
+                best_model=best_model,
+                baseline_model=baseline_model,
+                financial_analysis=financial_analysis,
+            ),
+            "meaning": _chart_meaning(chart_type, model_analysis, financial_analysis),
+            "what_it_cannot_prove": _chart_cannot_prove(chart_type),
+            "trend_interpretation": _chart_trend_interpretation(chart_type, model_analysis, financial_analysis),
+            "anomaly_note": _chart_anomaly_note(chart_type, outliers),
+            "business_insight": _chart_business_insight(chart_type, model_analysis, financial_analysis),
+            "recommended_action": _chart_recommended_action(chart_type),
+        }
+
+
 def build_chart_story(chart: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, str]:
-    context = context or {}
-    model_analysis = _as_dict(context.get("model_analysis"))
-    financial_analysis = _as_dict(context.get("financial_analysis")) or None
-    best_model = _as_dict(context.get("best_model"))
-    baseline_model = _as_dict(context.get("baseline_model")) or None
-    dataset_summary = _as_dict(context.get("dataset_summary"))
-    outliers = _as_list(_as_dict(dataset_summary.get("quality_report")).get("outliers"))
-    chart_type = str(chart.get("chart_type") or "chart")
-    title = str(chart.get("title") or _chart_title(chart_type))
-    return {
-        "chart_type": chart_type,
-        "title": title,
-        "chart_path": str(chart.get("chart_path") or ""),
-        "chart_url": str(chart.get("chart_url") or ""),
-        "explanation": _chart_explanation(chart_type, title),
-        "key_findings": _chart_key_findings(
-            chart_type=chart_type,
-            model_analysis=model_analysis,
-            best_model=best_model,
-            baseline_model=baseline_model,
-            financial_analysis=financial_analysis,
-        ),
-        "meaning": _chart_meaning(chart_type, model_analysis, financial_analysis),
-        "what_it_cannot_prove": _chart_cannot_prove(chart_type),
-        "trend_interpretation": _chart_trend_interpretation(chart_type, model_analysis, financial_analysis),
-        "anomaly_note": _chart_anomaly_note(chart_type, outliers),
-        "business_insight": _chart_business_insight(chart_type, model_analysis, financial_analysis),
-        "recommended_action": _chart_recommended_action(chart_type),
-    }
+    return ChartStoryEngine().build(chart, context)
 
 
 def build_metric_interpretation(
@@ -664,49 +717,143 @@ def _build_report_sections(
 ) -> list[dict[str, str]]:
     problem_type = str(model_analysis.get("problem_type") or "regression")
     target_column = str(model_analysis.get("target_column") or "")
+    dataset_type = str(_as_dict(dataset_summary.get("dataset_type")).get("label") or "資料集")
+    dataset_story = _as_dict(dataset_summary.get("dataset_story"))
+    best_model_name = str(best_model.get("model_name") or "最佳模型")
+    performance = _performance_summary(problem_type, best_model, _find_baseline_model(model_analysis))
+    story_can_answer = _story_list_sentence(dataset_story.get("can_answer"), fallback="這份資料可用於資料探索、模型比較與圖表解讀。")
+    story_cannot_answer = _story_list_sentence(dataset_story.get("cannot_answer"), prefix="不建議直接用來判斷：", fallback=_risk_sentence(quality_score, quality_issues, financial_analysis))
     return [
         {
-            "title": "資料理解與分析目的",
-            "analysis_purpose": f"確認資料中哪些欄位能解釋或預測「{target_column}」，並把技術結果轉換成可執行的下一步。",
-            "analysis_method": "讀取資料後建立欄位型態、缺失值、異常值與資料品質摘要，並依目標欄位判斷分析任務。",
-            "analysis_result": f"資料共有 {int(dataset_summary.get('row_count') or 0):,} 筆、{int(dataset_summary.get('column_count') or 0):,} 欄，資料品質分數為 {quality_score}/100。",
-            "interpretation": _quality_summary(quality_score, quality_issues),
-            "business_meaning": "資料品質會直接影響模型可信度；品質問題越多，越需要先做資料治理再進行決策。",
-            "recommended_action": "先檢查系統標示的缺失值、重複值、極端值與可能的目標洩漏欄位。",
-            "risks_and_limits": "資料摘要只能指出可疑欄位，仍需要使用者理解業務欄位定義後確認是否合理。",
-            "ai_conclusion": "這份資料已可進行初步分析，但正式決策前仍需處理資料品質風險。",
+            "title": "執行摘要",
+            "analysis_purpose": "讓決策者先在 10 秒內理解本次分析的核心結論。",
+            "analysis_method": "整合資料理解、品質檢查、模型比較與圖表故事，濃縮成可行動摘要。",
+            "analysis_result": f"本次資料為「{dataset_type}」，目標欄位為「{target_column or '尚未指定'}」；{performance}",
+            "interpretation": dataset_story.get("one_sentence") or "這份資料已被轉換成可閱讀的分析摘要。",
+            "business_meaning": "先知道重點，才能決定要補資料、換模型、產出報告或採取行動。",
+            "recommended_action": next_action,
+            "risks_and_limits": _risk_sentence(quality_score, quality_issues, financial_analysis),
+            "ai_conclusion": _ai_conclusion(best_model, quality_score, next_action),
         },
         {
-            "title": "模型分析與預測能力",
-            "analysis_purpose": f"評估哪些模型最能處理「{target_column}」這個{_problem_type_label(problem_type)}任務。",
-            "analysis_method": "系統自動建立前處理流程、訓練候選模型、加入 baseline model，並以測試資料比較模型表現。",
-            "analysis_result": _performance_summary(problem_type, best_model, _find_baseline_model(model_analysis)),
+            "title": "資料介紹",
+            "analysis_purpose": "說明這份資料代表什麼，避免把資料誤解成錯誤情境。",
+            "analysis_method": "DataUnderstandingEngine 依欄位名稱、資料型態、日期欄位、數值欄位與檔名語意判斷資料主題。",
+            "analysis_result": dataset_story.get("what_is_this") or f"資料共有 {int(dataset_summary.get('row_count') or 0):,} 筆、{int(dataset_summary.get('column_count') or 0):,} 欄。",
+            "interpretation": story_can_answer,
+            "business_meaning": "資料主題判斷會影響模型、圖表與報告語氣；主題錯誤會導致整份報告失真。",
+            "recommended_action": "先確認資料類型與業務理解一致，再進入模型訓練。",
+            "risks_and_limits": story_cannot_answer,
+            "ai_conclusion": f"目前系統將資料定位為「{dataset_type}」。",
+        },
+        {
+            "title": "資料品質",
+            "analysis_purpose": "判斷目前資料是否足以支撐模型與決策。",
+            "analysis_method": "檢查缺失值、重複列、極端值、疑似洩漏欄位與整體品質分數。",
+            "analysis_result": _quality_summary(quality_score, quality_issues),
+            "interpretation": "品質分數不是裝飾數字，而是提醒哪些結果可以相信、哪些需要先補資料。",
+            "business_meaning": "品質風險越高，模型分數越容易看起來漂亮但沒有決策價值。",
+            "recommended_action": "先修正資料品質問題，再使用模型結果做正式判斷。",
+            "risks_and_limits": "資料品質檢查只能指出可疑點，仍需人工確認欄位定義與資料來源。",
+            "ai_conclusion": f"目前資料品質分數為 {quality_score}/100。",
+        },
+        {
+            "title": "分析目標",
+            "analysis_purpose": f"確認本次是否要解釋或預測「{target_column}」。",
+            "analysis_method": "TargetRecommendationEngine 依欄位語意、型態、唯一值比例與資料主題推薦候選目標。",
+            "analysis_result": f"目前任務為「{_problem_type_label(problem_type)}」，目標欄位為「{target_column or '尚未指定'}」。",
+            "interpretation": "目標欄位代表使用者真正想回答的問題；若目標選錯，模型分數再高也沒有意義。",
+            "business_meaning": "好的目標欄位會讓圖表、模型與報告都指向同一個決策問題。",
+            "recommended_action": next_action,
+            "risks_and_limits": "自動推薦不是替使用者決定；正式分析前仍需確認欄位是否符合業務問題。",
+            "ai_conclusion": f"建議先以「{target_column or '系統推薦目標'}」作為本次分析主軸。",
+        },
+        {
+            "title": "分析方法",
+            "analysis_purpose": "說明系統如何從原始資料走到模型結果。",
+            "analysis_method": "建立前處理流程、缺失值填補、類別編碼、train/test split、baseline 對照與候選模型比較。",
+            "analysis_result": f"本次使用 {_problem_type_label(problem_type)} 流程，並以測試資料評估候選模型。",
+            "interpretation": "有 baseline 對照才能確認模型是否真的學到訊號，而不是只產生一個看起來專業的分數。",
+            "business_meaning": "方法透明會讓結果可追溯，也方便使用者修正目標欄位或模型設定。",
+            "recommended_action": "若結果用於高風險決策，請再加入交叉驗證或獨立驗證集。",
+            "risks_and_limits": "目前仍是表格機器學習流程，不等同因果推論或正式審計。",
+            "ai_conclusion": "本次方法可用於探索與初步決策，不應被當成最終真相。",
+        },
+        {
+            "title": "最佳模型",
+            "analysis_purpose": f"找出目前最適合處理「{target_column}」的模型。",
+            "analysis_method": "依任務型態排序候選模型，並與 baseline 比較。",
+            "analysis_result": performance,
             "interpretation": _model_result_interpretation(problem_type, best_model),
-            "business_meaning": "模型表現越穩定，越適合拿來做預測、排序或找出需要優先處理的對象。",
-            "recommended_action": next_action,
-            "risks_and_limits": "目前結果來自一次 train/test split；若要上線或做高風險決策，應加入交叉驗證、時間切分或獨立 holdout。",
-            "ai_conclusion": f"目前最適合先採用「{best_model.get('model_name', '最佳模型')}」作為分析基準。",
+            "business_meaning": "最佳模型提供目前最可靠的預測基準，但仍需要檢查是否發生資料洩漏。",
+            "recommended_action": f"先以「{best_model_name}」作為基準，再檢查錯誤樣本與重要特徵。",
+            "risks_and_limits": "單次切分可能高估或低估表現；資料量小時尤其需要保守解讀。",
+            "ai_conclusion": f"目前最佳模型為「{best_model_name}」。",
         },
         {
-            "title": "圖表洞察與決策證據",
-            "analysis_purpose": "用圖表把模型比較、關鍵欄位、預測誤差與趨勢訊號轉成可理解的證據。",
-            "analysis_method": "依使用者選擇或系統自動判斷產生圖表，並為每張圖表建立說明、關鍵發現、代表意義與建議行動。",
+            "title": "模型解讀",
+            "analysis_purpose": "把模型分數翻譯成一般人能理解的訊號。",
+            "analysis_method": "結合指標、baseline 差距、特徵重要性與資料品質風險。",
+            "analysis_result": _metric_evidence(problem_type, best_model),
+            "interpretation": "分數越高或誤差越低，代表模型越能重現目前資料中的模式；但不代表未來一定相同。",
+            "business_meaning": "模型可以協助排序、預測與找重點，但不能取代業務判斷。",
+            "recommended_action": "確認模型依賴的前幾個欄位是否合理，若有 ID 或答案欄位需排除後重跑。",
+            "risks_and_limits": "若指標異常接近 1，需優先檢查資料洩漏。",
+            "ai_conclusion": "模型解讀的核心是確認分數背後是否有合理原因。",
+        },
+        {
+            "title": "圖表解讀",
+            "analysis_purpose": "用圖表支撐文字結論，而不是堆疊更多資料。",
+            "analysis_method": "ChartStoryEngine 為每張圖建立說明、發現、意義、不能證明的事與下一步。",
             "analysis_result": f"本次共產生 {len(chart_interpretations)} 張可追溯圖表。",
-            "interpretation": "圖表不應只被視為結果展示，而是用來驗證模型是否可信、資料是否有風險、下一步是否明確。",
-            "business_meaning": "若圖表與模型指標指向一致，決策信心會提高；若彼此矛盾，應回頭檢查資料或分析設定。",
-            "recommended_action": "先閱讀每張圖表下方的『建議行動』，再決定要修資料、換模型或進入報告輸出。",
-            "risks_and_limits": "圖表呈現的是目前資料內的模式，不能保證外部市場或未來情境也會相同。",
-            "ai_conclusion": "圖表的價值在於支撐決策，而不是增加資訊量。",
+            "interpretation": chart_interpretations[0].get("key_findings") if chart_interpretations else "目前尚未產生圖表。",
+            "business_meaning": "圖表應該幫助使用者知道先看哪裡，而不是讓使用者自行解讀所有數據。",
+            "recommended_action": "先查看模型比較與特徵重要性，再決定是否需要補資料或換模型。",
+            "risks_and_limits": "圖表呈現的是目前資料內的模式，不能單獨證明因果或未來結果。",
+            "ai_conclusion": "圖表的價值在於支撐下一步決策。",
         },
         {
-            "title": "風險、限制與下一步",
-            "analysis_purpose": "避免使用者把模型結果誤解為絕對答案，並明確列出下一步行動。",
-            "analysis_method": "結合資料品質、模型表現、金融訊號與系統備註，整理風險與限制。",
-            "analysis_result": _risk_sentence(quality_score, quality_issues, financial_analysis),
-            "interpretation": "風險不代表資料不能用，而是代表需要先確認哪些假設會影響結論。",
-            "business_meaning": "把風險說清楚，可以讓決策者知道何時該採取行動、何時該先補資料。",
+            "title": "商業意義",
+            "analysis_purpose": "把技術結果轉換成決策語言。",
+            "analysis_method": "根據資料主題、模型表現與圖表故事推導可能的營運或研究含義。",
+            "analysis_result": story_can_answer,
+            "interpretation": "若資料主題與目標欄位明確，分析結果可直接對應到分類、預測、排序或風險確認。",
+            "business_meaning": "使用者不需要懂模型細節，也應該能知道結果代表哪些機會、風險與下一步。",
             "recommended_action": next_action,
-            "risks_and_limits": "本報告以目前上傳資料為準，不包含外部資料、商業背景或人工審核後的欄位定義。",
+            "risks_and_limits": "商業意義需要結合真實脈絡；系統只能依目前資料提出可驗證方向。",
+            "ai_conclusion": "本次分析提供的是可行動線索，不是取代決策者的結論。",
+        },
+        {
+            "title": "風險分析",
+            "analysis_purpose": "明確列出哪些結果不能過度解讀。",
+            "analysis_method": "彙整資料品質、樣本量、模型分數、圖表限制與金融/非金融適用性。",
+            "analysis_result": _risk_sentence(quality_score, quality_issues, financial_analysis),
+            "interpretation": "風險不代表資料不能用，而是代表需要知道哪些假設會影響結論。",
+            "business_meaning": "把風險說清楚，可以避免使用者因漂亮分數做出錯誤決策。",
+            "recommended_action": "先處理最嚴重的資料品質與目標欄位風險。",
+            "risks_and_limits": story_cannot_answer,
+            "ai_conclusion": "目前結果應搭配風險提示一起閱讀。",
+        },
+        {
+            "title": "建議行動",
+            "analysis_purpose": "把分析轉成下一個可執行動作。",
+            "analysis_method": "依資料品質、模型結果與圖表故事排序最值得先做的事。",
+            "analysis_result": next_action,
+            "interpretation": "下一步不一定是跑更多模型；更常見的是確認目標、修資料或檢查重要特徵。",
+            "business_meaning": "清楚的下一步能降低分析門檻，讓非資料背景使用者也能行動。",
+            "recommended_action": next_action,
+            "risks_and_limits": "若業務目標改變，下一步也應重新產生。",
+            "ai_conclusion": "目前最值得先做的是依建議行動驗證核心假設。",
+        },
+        {
+            "title": "結論",
+            "analysis_purpose": "收斂本次分析的主要訊息。",
+            "analysis_method": "綜合資料理解、品質、模型、圖表與風險。",
+            "analysis_result": _ai_conclusion(best_model, quality_score, next_action),
+            "interpretation": "這份結論應作為下一輪分析或決策討論的起點。",
+            "business_meaning": "好的分析不是提供更多數字，而是讓使用者知道接下來要做什麼。",
+            "recommended_action": next_action,
+            "risks_and_limits": "結論僅根據目前上傳資料，不包含外部資料與人工審核後的業務知識。",
             "ai_conclusion": _ai_conclusion(best_model, quality_score, next_action),
         },
     ]
@@ -809,10 +956,10 @@ def _metric_evidence(problem_type: str, model: dict[str, Any]) -> str:
 
 def _chart_explanation(chart_type: str, title: str) -> str:
     explanations = {
-        "model_comparison": "這張圖比較不同模型的預測誤差或分類表現，用來判斷哪個模型最適合目前資料。",
-        "feature_importance": "這張圖顯示模型認為哪些欄位最能影響目標欄位，用來找出優先關注的因素。",
-        "predicted_vs_actual": "這張圖比較模型預測值與真實值，越接近對角線代表預測越穩定。",
-        "residual_plot": "這張圖檢查預測誤差是否有系統性偏差，用來判斷模型是否漏掉重要規則。",
+        "model_comparison": "用測試資料誤差把候選模型排出順序，重點是看最佳模型是否真正勝過 baseline，而不是只看模型名稱。",
+        "feature_importance": "把模型最依賴的欄位排出優先級，協助你判斷結果是由合理訊號支撐，還是被 ID、來源欄位或資料洩漏帶偏。",
+        "predicted_vs_actual": "把預測值放回真實結果旁邊檢查，越接近理想線代表模型越能重現資料裡的規律。",
+        "residual_plot": "把每筆資料的預測誤差攤開檢查，用來找出模型是否在特定區段或族群持續偏差。",
         "financial_indicators": "這張圖彙整價格、移動平均與技術指標，用來觀察趨勢與短期風險。",
         "financial_forecast": "這張圖呈現時間序列預測，用來快速理解接下來可能的價格方向。",
         "price_moving_average": "這張圖把價格/指數/數值與移動平均放在一起，用來看短期與中期趨勢是否一致。",
@@ -835,7 +982,8 @@ def _chart_key_findings(
     if chart_type == "model_comparison":
         return _performance_summary(problem_type, best_model, baseline_model)
     if chart_type == "feature_importance":
-        return f"系統已用「{best_model.get('model_name', '最佳模型')}」整理欄位影響力，排名前段欄位是後續解釋與業務驗證的優先對象。"
+        target = str(model_analysis.get("target_column") or "目標欄位")
+        return f"系統已用「{best_model.get('model_name', '最佳模型')}」檢查哪些欄位最能解釋「{target}」；排名前段欄位應優先被人工驗證。"
     if chart_type == "predicted_vs_actual":
         return _model_result_interpretation(problem_type, best_model)
     if chart_type == "residual_plot":
@@ -872,7 +1020,7 @@ def _chart_trend_interpretation(
     if (chart_type.startswith("financial") or chart_type in {"price_moving_average", "return_volatility", "rsi_macd", "time_series_forecast"}) and financial_analysis:
         return f"目前趨勢標籤為「{financial_analysis.get('trend_label')}」，需觀察該趨勢是否持續出現在更多期間。"
     if chart_type == "model_comparison":
-        return "模型排序可視為目前資料對不同方法的適配程度；排序若很接近，代表需用更多驗證方式確認。"
+        return "模型排序可視為目前資料對不同方法的適配程度；若最佳模型明顯勝過 baseline，代表資料裡有可學習訊號。"
     if chart_type == "predicted_vs_actual":
         return "若大多數點集中在理想線附近，代表預測趨勢較穩；離散程度越大，代表不確定性越高。"
     return "此圖表主要用於解釋目前資料結構，不直接代表長期趨勢。"
@@ -895,7 +1043,7 @@ def _chart_business_insight(
     if chart_type == "feature_importance":
         return f"若前幾個欄位具有明確業務意義，它們很可能是影響「{target}」的主要槓桿。"
     if chart_type == "model_comparison":
-        return "最佳模型若明顯優於 baseline，表示資料內確實有可被模型學習的訊號。"
+        return "最佳模型若明顯優於 baseline，表示資料內確實有可被模型學習的訊號；若差距很小，應先改善資料而非追求更複雜模型。"
     if chart_type == "predicted_vs_actual":
         return "預測誤差較大的資料點通常代表特殊客群、特殊期間或資料紀錄問題。"
     if chart_type == "residual_plot":
@@ -1211,6 +1359,21 @@ def _dataset_suitable_tasks(
     if not tasks:
         tasks.append("欄位品質與類別分布檢查")
     return list(dict.fromkeys(tasks))[:4]
+
+
+def _story_list_sentence(value: Any, *, fallback: str, prefix: str = "可回答：") -> str:
+    items = [str(item) for item in _as_list(value) if str(item).strip()]
+    if not items:
+        return fallback
+    return f"{prefix}{'；'.join(items[:4])}。"
+
+
+def _dataset_next_action(recommended_targets: list[str], dataset_kind: str) -> str:
+    if recommended_targets:
+        if "鳶尾花" in dataset_kind and recommended_targets[0] == "Species":
+            return "先用 Species 做分類目標，再查看花瓣長度與花瓣寬度是否是主要判斷依據。"
+        return f"先確認「{recommended_targets[0]}」是否就是你的問題目標，再進入模型或圖表分析。"
+    return "先選擇分析目的與目標欄位；若不確定，從資料探索和欄位分布開始。"
 
 
 def _dataset_primary_risk(
