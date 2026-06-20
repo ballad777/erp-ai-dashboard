@@ -22,6 +22,14 @@ class DatasetAnalysisResponse(BaseModel):
     evidence: list[dict[str, object]] = Field(default_factory=list)
     terms: list[dict[str, object]] = Field(default_factory=list)
     research_details: dict[str, object] = Field(default_factory=dict)
+    understanding: dict[str, object] = Field(default_factory=dict)
+    possible_data_topics: list[dict[str, object]] = Field(default_factory=list)
+    dataset_type: dict[str, object] = Field(default_factory=dict)
+    confidence_score: int | None = None
+    recommended_analysis_goals: list[dict[str, object]] = Field(default_factory=list)
+    target_recommendations: list[dict[str, object]] = Field(default_factory=list)
+    financial_eligibility: dict[str, object] = Field(default_factory=dict)
+    not_suitable_reasons: list[str] = Field(default_factory=list)
 
 
 class MergedDatasetAnalysisResponse(DatasetAnalysisResponse):
@@ -46,6 +54,7 @@ class DatasetBatchItem(BaseModel):
 class MultipleDatasetAnalysisResponse(BaseModel):
     datasets: list[DatasetBatchItem]
     merged: MergedDatasetAnalysisResponse | None = None
+    multi_table_plan: dict[str, object] | None = None
     notes: list[str]
 
 
@@ -64,8 +73,9 @@ class ModelMetric(BaseModel):
     accuracy: float | None = None
     f1_score: float | None = None
     automl_best_params: dict[str, object] = Field(default_factory=dict)
-    model_path: str
-    model_url: str
+    model_path: str = ""
+    model_url: str = ""
+    model_save_status: dict[str, object] = Field(default_factory=dict)
 
 
 class ModelOption(BaseModel):
@@ -111,6 +121,8 @@ class ModelAnalysisResponse(BaseModel):
     charts: list[GeneratedChart]
     selected_chart_types: list[str]
     notes: list[str]
+    leakage_warnings: list[str] = Field(default_factory=list)
+    model_save_policy: dict[str, object] = Field(default_factory=dict)
     run_id: str | None = None
     dataset_id: str | None = None
     run_manifest: dict[str, object] = Field(default_factory=dict)

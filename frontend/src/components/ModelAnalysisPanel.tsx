@@ -360,6 +360,7 @@ export function ModelAnalysisPanel({
             modelSelectionMode,
             requestedModels,
             automlMode,
+            false,
             {
               onProgress: setJobProgress,
               onJobCreated: setActiveJobId
@@ -373,6 +374,7 @@ export function ModelAnalysisPanel({
             modelSelectionMode,
             requestedModels,
             automlMode,
+            false,
             {
               onProgress: setJobProgress,
               onJobCreated: setActiveJobId
@@ -885,6 +887,19 @@ function ModelAnalysisResult({
         <strong>{nextAction}</strong>
       </section>
 
+      {result.model_save_policy ? (
+        <InlineNotice tone="info" title={text("模型保存策略", "Model save policy")}>
+          {result.model_save_policy.message ??
+            text("預設不保存完整模型物件，只保留指標、圖表與報告。", "Full model objects are not saved by default; metrics, charts, and reports are retained.")}
+        </InlineNotice>
+      ) : null}
+
+      {result.leakage_warnings?.length ? (
+        <InlineNotice tone="warning" title={text("資料洩漏風險", "Leakage risk")}>
+          <ul>{result.leakage_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+        </InlineNotice>
+      ) : null}
+
       <section className="result-section">
         <div className="result-section-heading">
           <div>
@@ -1026,10 +1041,16 @@ function ModelAnalysisResult({
                     <td className="tabular">{text(`${formatMetric(metric.training_time_seconds)} 秒`, `${formatMetric(metric.training_time_seconds)} sec`)}</td>
                     <td>{formatParams(metric.automl_best_params, text("預設", "Default"))}</td>
                     <td>
-                      <a href={metric.model_url} download className="table-download-link">
-                        <Download aria-hidden="true" />
-                        {text("下載", "Download")}
-                      </a>
+                      {metric.model_url ? (
+                        <a href={metric.model_url} download className="table-download-link">
+                          <Download aria-hidden="true" />
+                          {text("下載", "Download")}
+                        </a>
+                      ) : (
+                        <Badge variant="secondary">
+                          {text("未保存", "Not saved")}
+                        </Badge>
+                      )}
                     </td>
                   </tr>
                 ))}

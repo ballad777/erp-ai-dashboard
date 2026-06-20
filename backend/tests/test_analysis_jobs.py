@@ -112,5 +112,7 @@ def test_model_job_endpoint_runs_real_dataset_analysis() -> None:
     assert result["charts"][0]["chart_type"] == "model_comparison"
     assert result["charts"][0]["chart_url"].startswith("/api/artifacts/")
     assert Path(result["charts"][0]["chart_path"]).suffix == ".png"
-    assert result["model_results"][0]["model_url"].startswith("/api/artifacts/")
-    assert Path(result["model_results"][0]["model_path"]).suffix == ".joblib"
+    assert result["model_results"][0]["model_url"] == ""
+    assert result["model_results"][0]["model_path"] == ""
+    assert result["model_results"][0]["model_save_status"]["saved"] is False
+    assert result["model_save_policy"]["save_model"] is False

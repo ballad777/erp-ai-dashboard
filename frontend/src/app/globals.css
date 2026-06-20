@@ -8360,3 +8360,172 @@ details[open] > summary .disclosure-chevron {
     font-size: 11px;
   }
 }
+
+/* Dataset intelligence and storage management surfaces. */
+.merge-strategy-panel,
+.storage-management-panel,
+.understanding-summary-card {
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-panel);
+  background: linear-gradient(180deg, rgb(var(--color-surface) / .96), rgb(var(--color-surface-muted) / .72));
+  box-shadow: var(--shadow-panel);
+  padding: clamp(1rem, 2vw, 1.35rem);
+}
+
+.merge-strategy-panel {
+  margin-bottom: 1rem;
+}
+
+.strategy-reason,
+.storage-placeholder,
+.storage-message,
+.understanding-summary-card p {
+  color: rgb(var(--color-muted));
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.strategy-key-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .75rem;
+  margin: 1rem 0;
+}
+
+.strategy-key-card {
+  display: grid;
+  gap: .25rem;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-card);
+  background: rgb(var(--color-surface) / .82);
+  padding: .85rem;
+}
+
+.strategy-key-card svg {
+  color: rgb(var(--color-primary));
+}
+
+.strategy-key-card span {
+  color: rgb(var(--color-ink));
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.strategy-key-card small {
+  color: rgb(var(--color-muted));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.storage-management-panel {
+  display: grid;
+  gap: .9rem;
+  margin-top: 1rem;
+}
+
+.storage-management-panel .panel-heading-row svg {
+  color: rgb(var(--color-primary));
+}
+
+.storage-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .6rem;
+}
+
+.storage-metric-grid div {
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-card);
+  background: rgb(var(--color-surface) / .72);
+  padding: .75rem;
+}
+
+.storage-metric-grid dt {
+  color: rgb(var(--color-muted));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.storage-metric-grid dd {
+  color: rgb(var(--color-ink));
+  font-size: 15px;
+  font-weight: 850;
+  margin: .2rem 0 0;
+}
+
+.storage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .55rem;
+}
+
+.storage-message {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  margin: 0;
+}
+
+.storage-message svg {
+  color: rgb(var(--color-warning));
+  width: 1rem;
+  height: 1rem;
+}
+
+.understanding-summary-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.understanding-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.understanding-grid > div {
+  display: grid;
+  align-content: start;
+  gap: .7rem;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-card);
+  background: rgb(var(--color-surface) / .68);
+  padding: .9rem;
+}
+
+.understanding-grid strong {
+  color: rgb(var(--color-ink));
+  font-size: 14px;
+}
+
+.compact-explain-list {
+  display: grid;
+  gap: .6rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.compact-explain-list li {
+  display: grid;
+  gap: .2rem;
+}
+
+.compact-explain-list span {
+  color: rgb(var(--color-ink));
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.compact-explain-list small {
+  color: rgb(var(--color-muted));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 760px) {
+  .understanding-grid,
+  .storage-metric-grid {
+    grid-template-columns: 1fr;
+  }
+}

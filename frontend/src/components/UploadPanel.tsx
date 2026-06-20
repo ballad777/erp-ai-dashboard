@@ -2,11 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   CloudUpload,
   FileSpreadsheet,
+  GitBranch,
+  HardDrive,
   Plus,
+  RefreshCw,
   Trash2,
   X
 } from "lucide-react";
@@ -29,7 +33,15 @@ import {
 } from "@/components/WorkspaceSource";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { analyzeDatasets } from "@/lib/api";
+import {
+  analyzeDatasets,
+  cleanupAllModels,
+  cleanupLatestOnly,
+  cleanupOldModels,
+  getStorageStatus,
+  type MultiTablePlan,
+  type StorageStatus
+} from "@/lib/api";
 
 const acceptedTypes = ".csv,.xlsx,.xls,.json,application/json";
 const maxFileBytes = 25 * 1024 * 1024;
@@ -51,6 +63,8 @@ export function UploadPanel() {
     setUploads,
     mergedResult,
     setMergedResult,
+    multiTablePlan,
+    setMultiTablePlan,
     batchNotes,
     setBatchNotes,
     error,
@@ -127,6 +141,7 @@ export function UploadPanel() {
       return [...current, ...newUploads.filter((upload) => !currentIds.has(upload.id))];
     });
     setMergedResult(null);
+    setMultiTablePlan(null);
     setBatchNotes([]);
     setError(null);
 
@@ -165,6 +180,7 @@ export function UploadPanel() {
 
     setError(null);
     setMergedResult(null);
+    setMultiTablePlan(null);
     setBatchNotes([]);
     setPanelStates({});
     setUploads((current) =>
@@ -190,6 +206,7 @@ export function UploadPanel() {
         })
       );
       setMergedResult(batchResult.merged);
+      setMultiTablePlan(batchResult.multi_table_plan ?? null);
       setBatchNotes(batchResult.notes);
 
       const firstSuccessfulIndex = batchResult.datasets.findIndex((item) => item.success);
@@ -242,6 +259,7 @@ export function UploadPanel() {
     const removedFile = uploads.find((upload) => upload.id === id);
     setUploads((current) => current.filter((upload) => upload.id !== id));
     setMergedResult(null);
+    setMultiTablePlan(null);
     setBatchNotes([]);
     setError(null);
     setPanelStates({});
@@ -444,30 +462,31 @@ export function UploadPanel() {
           </div>
           <ol className="data-flow-list">
             <FlowStep
-              title={text("加入檔案", "Add files")}
-              detail={uploads.length > 0 ? text(`${uploads.length} 個檔案`, `${uploads.length} files`) : text("尚未加入", "Not added")}
+              title={text("資料理解", "Data understanding")}
+              detail={completedCount > 0 ? text(`${completedCount} 個檔案已完成輪廓`, `${completedCount} profiles ready`) : uploads.length > 0 ? text("等待後端讀取", "Waiting for backend") : text("尚未加入資料", "No files yet")}
               complete={uploads.length > 0}
               active={uploads.length === 0}
             />
             <FlowStep
-              title={text("後端讀取", "Backend ingestion")}
-              detail={isLoading ? text("正在執行", "Running") : completedCount > 0 ? text(`${completedCount} 個成功`, `${completedCount} ready`) : text("等待執行", "Waiting")}
-              complete={completedCount > 0 && !isLoading}
+              title={text("合併策略", "Merge strategy")}
+              detail={multiTablePlan?.label ?? (completedCount > 1 ? text("等待策略", "Waiting for strategy") : text("單檔不需合併", "Single file"))}
+              complete={Boolean(multiTablePlan) || completedCount === 1}
               active={isLoading}
             />
             <FlowStep
-              title={text("資料探索", "Data exploration")}
-              detail={activeSource ? text("可以查看重點摘要", "Key summaries are ready") : text("讀取後啟用", "Enabled after ingestion")}
+              title={text("分析目標", "Analysis goal")}
+              detail={activeSource ? text("確認目標後再建模", "Confirm the goal before modeling") : text("讀取後啟用", "Enabled after ingestion")}
               complete={Boolean(activeSource)}
               active={!isLoading && completedCount > 0 && !activeSource}
             />
             <FlowStep
-              title={text("進入分析", "Start analysis")}
-              detail={activeSource ? text("模型、金融與報告已解鎖", "Models, finance, and reports are unlocked") : text("等待資料", "Waiting for data")}
-              complete={Boolean(activeSource)}
+              title={text("模型 / 圖表 / 報告", "Models / charts / reports")}
+              detail={activeSource ? text("依確認目的執行", "Run after confirmation") : text("等待資料", "Waiting for data")}
+              complete={false}
               active={false}
             />
           </ol>
+          <StorageManagement />
         </aside>
       </div>
 
@@ -485,6 +504,7 @@ export function UploadPanel() {
               {mergedResult.merge_notes[0]}
             </InlineNotice>
           ) : null}
+          {multiTablePlan ? <MergeStrategyPanel plan={multiTablePlan} /> : null}
           <AnalysisResult result={activeSource.dataset} />
         </section>
       ) : null}
@@ -531,6 +551,129 @@ function FileState({ upload }: { upload: DatasetUploadState }) {
   return <Badge variant="outline">{text("等待", "Waiting")}</Badge>;
 }
 
+function MergeStrategyPanel({ plan }: { plan: MultiTablePlan }) {
+  const { text } = useLocale();
+  const keys = plan.join_key_candidates ?? [];
+  const warnings = plan.warnings ?? [];
+  return (
+    <section className="merge-strategy-panel" aria-labelledby="merge-strategy-title">
+      <div className="panel-heading-row">
+        <div>
+          <span>{text("合併策略", "Merge strategy")}</span>
+          <h2 id="merge-strategy-title">{plan.label ?? text("策略待確認", "Strategy pending")}</h2>
+        </div>
+        <Badge variant={plan.recommended_strategy === "multi_table_relationship" ? "success" : "outline"}>
+          {plan.confidence_score ? `${plan.confidence_score}%` : text("需確認", "Review")}
+        </Badge>
+      </div>
+      {plan.reason ? <p className="strategy-reason">{plan.reason}</p> : null}
+      {keys.length > 0 ? (
+        <div className="strategy-key-grid">
+          {keys.slice(0, 6).map((candidate) => (
+            <div key={`${candidate.key}-${candidate.files?.join("-")}`} className="strategy-key-card">
+              <GitBranch aria-hidden="true" />
+              <span>{candidate.key}</span>
+              <small>{candidate.files?.slice(0, 3).join("、")}</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {warnings.length > 0 ? (
+        <InlineNotice tone="warning" title={text("合併前請確認", "Check before merging")}>
+          {warnings.join(" ")}
+        </InlineNotice>
+      ) : null}
+    </section>
+  );
+}
+
+function StorageManagement() {
+  const { text } = useLocale();
+  const [status, setStatus] = useState<StorageStatus | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getStorageStatus()
+      .then((nextStatus) => {
+        if (!cancelled) setStatus(nextStatus);
+      })
+      .catch(() => {
+        if (!cancelled) setMessage(text("儲存空間狀態暫時無法讀取。", "Storage status is temporarily unavailable."));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [text]);
+
+  async function runCleanup(action: "old" | "all" | "latest") {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      const response =
+        action === "old"
+          ? await cleanupOldModels()
+          : action === "all"
+            ? await cleanupAllModels()
+            : await cleanupLatestOnly();
+      setStatus(response.status);
+      setMessage(text("儲存空間已更新。", "Storage has been updated."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : text("清理失敗。", "Cleanup failed."));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <section className="storage-management-panel" aria-labelledby="storage-management-title">
+      <div className="panel-heading-row">
+        <div>
+          <span>{text("儲存空間", "Storage")}</span>
+          <h2 id="storage-management-title">{text("輸出管理", "Output management")}</h2>
+        </div>
+        <HardDrive aria-hidden="true" />
+      </div>
+      {status ? (
+        <>
+          <dl className="storage-metric-grid">
+            <div><dt>{text("總量", "Total")}</dt><dd>{formatMegabytes(status.generated_outputs.mb)}</dd></div>
+            <div><dt>{text("模型", "Models")}</dt><dd>{formatMegabytes(status.models.mb)}</dd></div>
+            <div><dt>{text("圖表", "Charts")}</dt><dd>{formatMegabytes(status.charts.mb)}</dd></div>
+            <div><dt>{text("報告", "Reports")}</dt><dd>{formatMegabytes(status.reports.mb)}</dd></div>
+          </dl>
+          {status.warning ? (
+            <InlineNotice tone="error" title={text("模型資料夾過大", "Model folder is too large")}>
+              {status.warning_message ?? text("模型輸出資料夾過大，建議清理舊模型。", "The model output folder is too large. Clean old models.")}
+            </InlineNotice>
+          ) : null}
+        </>
+      ) : (
+        <p className="storage-placeholder">{text("正在讀取儲存狀態。", "Reading storage status.")}</p>
+      )}
+      {message ? (
+        <p className="storage-message">
+          <AlertTriangle aria-hidden="true" />
+          {message}
+        </p>
+      ) : null}
+      <div className="storage-actions">
+        <Button type="button" variant="outline" size="sm" disabled={isLoading} onClick={() => void runCleanup("old")}>
+          <RefreshCw aria-hidden="true" />
+          {text("清除舊模型", "Clean old models")}
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={isLoading} onClick={() => void runCleanup("latest")}>
+          {text("只保留最新", "Keep latest")}
+        </Button>
+        <Button type="button" variant="destructive" size="sm" disabled={isLoading} onClick={() => void runCleanup("all")}>
+          {text("清除全部模型", "Clear all models")}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function FlowStep({
   title,
   detail,
@@ -570,4 +713,9 @@ function isAcceptedFile(file: File) {
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function formatMegabytes(value: number) {
+  if (value >= 1024) return `${(value / 1024).toFixed(2)} GB`;
+  return `${value.toFixed(2)} MB`;
 }

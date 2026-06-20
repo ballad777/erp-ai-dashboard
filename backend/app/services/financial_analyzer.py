@@ -22,6 +22,7 @@ from fastapi import HTTPException, UploadFile
 from sklearn.linear_model import LinearRegression
 
 from app.services.artifact_access import create_artifact_url
+from app.services.data_understanding import is_financial_timeseries_dataset
 from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes, read_uploaded_dataframe
 from app.services.insight_narrative import build_financial_brief
 from app.services.analysis_progress import (
@@ -41,13 +42,9 @@ PRICE_NAME_HINTS = (
     "adjusted_close",
     "adjusted close",
     "price",
-    "last",
-    "settle",
-    "nav",
     "收盤",
     "價格",
     "股價",
-    "淨值",
 )
 
 FINANCIAL_CHART_TITLES = {
@@ -143,6 +140,18 @@ def run_financial_analysis(
     ensure_not_cancelled(should_cancel)
     emit_progress(progress_callback, "detecting_columns", "正在偵測日期與價格/指數/數值欄位。")
     notes: list[str] = []
+    is_financial, understanding = is_financial_timeseries_dataset(df, file_name=file_name)
+    if not is_financial:
+        primary_domain = understanding.get("primary_domain") or {}
+        suggestions = "建議改用趨勢分析、成本分析或一般資料探索。"
+        if primary_domain.get("key") == "ai_llm":
+            suggestions = "建議改用 benchmark 分數趨勢、API 價格下降趨勢、訓練成本變化或模型發布時間軸。"
+        reasons = "；".join(str(reason) for reason in understanding.get("financial_eligibility", {}).get("reasons", []))
+        raise HTTPException(
+            status_code=400,
+            detail=f"此資料不適合金融技術分析，{suggestions}" + (f" 原因：{reasons}" if reasons else ""),
+        )
+
     resolved_date_column = _detect_date_column(df, date_column)
     resolved_price_column = _detect_price_column(df, price_column, resolved_date_column)
 
@@ -282,6 +291,11 @@ def _detect_price_column(
     if requested_column:
         if requested_column not in df.columns:
             raise HTTPException(status_code=400, detail="指定的價格/指數/數值欄位不存在。")
+        if not _looks_like_financial_price_column(requested_column):
+            raise HTTPException(
+                status_code=400,
+                detail="指定欄位不像金融價格欄位，禁止把 benchmark score、source_row_number 或任意數值硬套 RSI/MACD。",
+            )
         prices = pd.to_numeric(df[requested_column], errors="coerce")
         if prices.notna().sum() < 6 or float(prices.notna().mean()) < 0.5:
             raise HTTPException(status_code=400, detail="指定的價格/指數/數值欄位無法有效轉換為數值。")
@@ -300,6 +314,8 @@ def _detect_price_column(
 
         lowered = column_name.lower()
         has_hint = any(hint in lowered for hint in PRICE_NAME_HINTS)
+        if not has_hint or not _looks_like_financial_price_column(column_name):
+            continue
         valid_ratio = float(prices.notna().mean())
         volatility = float(prices.dropna().std() or 0)
         score = valid_ratio * 3 + min(volatility, 1000) / 1000
@@ -316,6 +332,15 @@ def _detect_price_column(
         )
 
     return max(scored_columns, key=lambda item: item[0])[1]
+
+
+def _looks_like_financial_price_column(column_name: str) -> bool:
+    normalized = column_name.strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized in {"source_row_number", "row_number", "score", "score_pct", "benchmark_score", "max_score"}:
+        return False
+    if any(token in normalized for token in ("benchmark", "token", "input", "output", "training", "cost", "source")):
+        return False
+    return normalized in {"close", "price", "open", "high", "low", "adjusted_close", "adj_close"} or normalized.endswith("_close") or normalized.endswith("_price")
 
 
 def _parse_dates(series: pd.Series) -> pd.Series:

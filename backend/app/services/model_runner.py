@@ -13,8 +13,6 @@ from time import perf_counter
 from typing import Any, Callable
 from uuid import uuid4
 
-import joblib
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MPL_CACHE_DIR = REPO_ROOT / "generated_outputs" / ".matplotlib"
 MPL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -57,6 +55,12 @@ from app.services.analysis_progress import (
     emit_progress,
     ensure_not_cancelled,
 )
+from app.utils.storage_guard import (
+    DEFAULT_MODEL_MAX_MB,
+    cleanup_large_files,
+    cleanup_old_models,
+    safe_save_model,
+)
 
 GENERATED_OUTPUTS_DIR = REPO_ROOT / "generated_outputs"
 CHART_DIR = GENERATED_OUTPUTS_DIR / "charts"
@@ -83,6 +87,39 @@ ID_LIKE_COLUMN_NAMES = {
     "order_id",
     "transaction_id",
     "source_row_number",
+    "source_file",
+    "file_name",
+    "created_at",
+    "updated_at",
+    "model_name",
+    "model",
+    "url",
+}
+ALWAYS_EXCLUDED_FEATURE_NAMES = {
+    "id",
+    "uuid",
+    "guid",
+    "index",
+    "row_number",
+    "source_row_number",
+    "source_file",
+    "file_name",
+    "created_at",
+    "updated_at",
+    "model_name",
+    "model",
+    "name",
+    "description",
+    "url",
+    "link",
+}
+HIGH_RISK_ENTITY_FEATURE_NAMES = {
+    "company",
+    "organization",
+    "provider",
+    "author",
+    "person",
+    "user",
 }
 ANALYSIS_MODES = {"auto", "regression", "classification"}
 MODEL_SELECTION_MODES = {"auto", "custom"}
@@ -194,6 +231,7 @@ async def run_uploaded_model_analysis(
     model_selection_mode: str = "auto",
     selected_models: str = "auto",
     automl_mode: str = "off",
+    save_model: bool = False,
     progress_callback: ProgressCallback | None = None,
     should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
@@ -209,6 +247,7 @@ async def run_uploaded_model_analysis(
         model_selection_mode=model_selection_mode,
         selected_models=selected_models,
         automl_mode=automl_mode,
+        save_model=save_model,
         progress_callback=progress_callback,
         should_cancel=should_cancel,
     )
@@ -222,6 +261,7 @@ async def run_uploaded_merged_model_analysis(
     model_selection_mode: str = "auto",
     selected_models: str = "auto",
     automl_mode: str = "off",
+    save_model: bool = False,
     progress_callback: ProgressCallback | None = None,
     should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
@@ -263,6 +303,7 @@ async def run_uploaded_merged_model_analysis(
         model_selection_mode=model_selection_mode,
         selected_models=selected_models,
         automl_mode=automl_mode,
+        save_model=save_model,
         progress_callback=progress_callback,
         should_cancel=should_cancel,
     )
@@ -283,6 +324,7 @@ def run_model_analysis(
     model_selection_mode: str = "auto",
     selected_models: str = "auto",
     automl_mode: str = "off",
+    save_model: bool = False,
     progress_callback: ProgressCallback | None = None,
     should_cancel: CancelCheck | None = None,
 ) -> dict[str, Any]:
@@ -318,12 +360,14 @@ def run_model_analysis(
             f"本次依使用者選擇改用「{_problem_type_label(problem_type)}」。"
         )
 
+    leakage_warnings: list[str] = []
     working_df = _prepare_modeling_dataframe(
         source_working_df,
         target_column=target_column,
         problem_type=problem_type,
         model_selection_mode=requested_model_selection_mode,
         notes=notes,
+        leakage_warnings=leakage_warnings,
     )
     y_raw = working_df[target_column]
     x_raw = working_df.drop(columns=[target_column]).dropna(axis=1, how="all")
@@ -393,6 +437,7 @@ def run_model_analysis(
         y_train=y_train,
         y_test=y_test,
         problem_type=problem_type,
+        save_model=save_model,
     )
     model_results.append(baseline_result)
     predictions_by_model[str(baseline_result["model_name"])] = baseline_predictions
@@ -425,7 +470,16 @@ def run_model_analysis(
                 notes=notes,
             )
             predictions = np.asarray(pipeline.predict(x_test), dtype=float)
-            model_path = _save_trained_model(pipeline, spec.key)
+            model_save_status = _save_trained_model(
+                pipeline,
+                spec.key,
+                enabled=save_model,
+            )
+            model_path = (
+                REPO_ROOT / str(model_save_status["path"])
+                if model_save_status.get("saved") and model_save_status.get("path")
+                else None
+            )
             result_payload: dict[str, Any] = {
                 "model_key": spec.key,
                 "model_name": spec.label,
@@ -435,11 +489,9 @@ def run_model_analysis(
                 "mae": round(float(mean_absolute_error(y_test, predictions)), 6),
                 "training_time_seconds": round(training_time_seconds, 6),
                 "automl_best_params": best_params,
-                "model_path": str(model_path.relative_to(REPO_ROOT)),
-                "model_url": create_artifact_url(
-                    model_path,
-                    root=GENERATED_OUTPUTS_DIR,
-                ),
+                "model_path": str(model_save_status.get("path") or ""),
+                "model_url": create_artifact_url(model_path, root=GENERATED_OUTPUTS_DIR) if model_path else "",
+                "model_save_status": model_save_status,
             }
 
             if problem_type == "classification":
@@ -525,6 +577,9 @@ def run_model_analysis(
         notes.append(
             "此版本依需求顯示 R2、RMSE、MAE；分類目標欄位會先轉成數值標籤後計算這些指標。"
         )
+    leakage_warnings.extend(_detect_metric_leakage_warnings(model_results, problem_type=problem_type))
+    if leakage_warnings:
+        notes.extend(leakage_warnings)
 
     ensure_not_cancelled(should_cancel)
     emit_progress(
@@ -565,6 +620,12 @@ def run_model_analysis(
         "charts": charts,
         "selected_chart_types": selected_chart_types,
         "notes": notes,
+        "leakage_warnings": leakage_warnings,
+        "model_save_policy": {
+            "save_model": save_model,
+            "max_model_mb": DEFAULT_MODEL_MAX_MB,
+            "message": "預設不保存完整模型物件；只保留指標、圖表、預測樣本與報告。",
+        },
     }
     dataset_summary = analyze_dataframe(df, file_name=file_name)
     result.update(
@@ -573,6 +634,8 @@ def run_model_analysis(
             model_analysis=result,
         )
     )
+    cleanup_old_models(MODEL_DIR, keep_latest=5)
+    cleanup_large_files(GENERATED_OUTPUTS_DIR, max_mb=DEFAULT_MODEL_MAX_MB)
     return result
 
 
@@ -704,9 +767,10 @@ def _model_catalog() -> list[ModelSpec]:
             complexity="medium",
             estimator_factory=lambda: DecisionTreeRegressor(
                 max_depth=6,
+                min_samples_leaf=3,
                 random_state=MODEL_RANDOM_STATE,
             ),
-            param_grid_factory=lambda _: {"max_depth": [3, 6, None]},
+            param_grid_factory=lambda _: {"max_depth": [3, 6, 12], "min_samples_leaf": [3, 5]},
         ),
         ModelSpec(
             key="random_forest",
@@ -716,13 +780,18 @@ def _model_catalog() -> list[ModelSpec]:
             description="穩健的非線性模型，適合混合欄位與一般表格資料。",
             complexity="medium",
             estimator_factory=lambda: RandomForestRegressor(
-                n_estimators=35,
+                n_estimators=80,
+                max_depth=12,
+                min_samples_leaf=3,
+                max_features="sqrt",
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
             param_grid_factory=lambda _: {
-                "n_estimators": [80, 160],
-                "max_depth": [6, None],
+                "n_estimators": [60, 100],
+                "max_depth": [6, 12],
+                "min_samples_leaf": [3, 5],
+                "max_features": ["sqrt"],
             },
         ),
         ModelSpec(
@@ -733,13 +802,18 @@ def _model_catalog() -> list[ModelSpec]:
             description="隨機化更強，常用來檢查特徵訊號與穩健性。",
             complexity="medium",
             estimator_factory=lambda: ExtraTreesRegressor(
-                n_estimators=40,
+                n_estimators=80,
+                max_depth=12,
+                min_samples_leaf=3,
+                max_features="sqrt",
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
             param_grid_factory=lambda _: {
-                "n_estimators": [80, 160],
-                "max_depth": [6, None],
+                "n_estimators": [60, 100],
+                "max_depth": [6, 12],
+                "min_samples_leaf": [3, 5],
+                "max_features": ["sqrt"],
             },
         ),
         ModelSpec(
@@ -793,8 +867,12 @@ def _model_catalog() -> list[ModelSpec]:
             family="tree",
             description="可解釋的非線性分類模型，適合探索規則。",
             complexity="medium",
-            estimator_factory=lambda: DecisionTreeClassifier(max_depth=6, random_state=MODEL_RANDOM_STATE),
-            param_grid_factory=lambda _: {"max_depth": [3, 6, None]},
+            estimator_factory=lambda: DecisionTreeClassifier(
+                max_depth=6,
+                min_samples_leaf=3,
+                random_state=MODEL_RANDOM_STATE,
+            ),
+            param_grid_factory=lambda _: {"max_depth": [3, 6, 12], "min_samples_leaf": [3, 5]},
         ),
         ModelSpec(
             key="random_forest_classifier",
@@ -804,13 +882,18 @@ def _model_catalog() -> list[ModelSpec]:
             description="穩健的表格資料分類模型，可處理非線性關係。",
             complexity="medium",
             estimator_factory=lambda: RandomForestClassifier(
-                n_estimators=35,
+                n_estimators=80,
+                max_depth=12,
+                min_samples_leaf=3,
+                max_features="sqrt",
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
             param_grid_factory=lambda _: {
-                "n_estimators": [80, 160],
-                "max_depth": [6, None],
+                "n_estimators": [60, 100],
+                "max_depth": [6, 12],
+                "min_samples_leaf": [3, 5],
+                "max_features": ["sqrt"],
             },
         ),
         ModelSpec(
@@ -821,13 +904,18 @@ def _model_catalog() -> list[ModelSpec]:
             description="強隨機化集成模型，適合檢查分類特徵穩定性。",
             complexity="medium",
             estimator_factory=lambda: ExtraTreesClassifier(
-                n_estimators=40,
+                n_estimators=80,
+                max_depth=12,
+                min_samples_leaf=3,
+                max_features="sqrt",
                 random_state=MODEL_RANDOM_STATE,
                 n_jobs=-1,
             ),
             param_grid_factory=lambda _: {
-                "n_estimators": [80, 160],
-                "max_depth": [6, None],
+                "n_estimators": [60, 100],
+                "max_depth": [6, 12],
+                "min_samples_leaf": [3, 5],
+                "max_features": ["sqrt"],
             },
         ),
         ModelSpec(
@@ -1205,18 +1293,26 @@ def _prepare_modeling_dataframe(
     problem_type: str,
     model_selection_mode: str,
     notes: list[str],
+    leakage_warnings: list[str],
 ) -> pd.DataFrame:
     modeling_df = source_df.copy()
     feature_columns = [column for column in modeling_df.columns if column != target_column]
     columns_to_drop: list[str] = []
     drop_reasons: list[str] = []
+    target_series = modeling_df[target_column]
 
     for column in feature_columns:
         series = modeling_df[column]
         column_name = str(column)
+        normalized = column_name.strip().lower().replace("-", "_").replace(" ", "_")
         if series.isna().all():
             columns_to_drop.append(column)
             drop_reasons.append(f"{column_name}：全欄位缺失")
+            continue
+
+        if normalized in ALWAYS_EXCLUDED_FEATURE_NAMES:
+            columns_to_drop.append(column)
+            drop_reasons.append(f"{column_name}：系統保護欄位，不適合直接作為預測特徵")
             continue
 
         if _is_id_like_column(column_name):
@@ -1224,13 +1320,32 @@ def _prepare_modeling_dataframe(
             drop_reasons.append(f"{column_name}：識別碼欄位，不適合直接作為預測特徵")
             continue
 
-        if not pd.api.types.is_numeric_dtype(series):
+        if any(entity_name == normalized or normalized.endswith(f"_{entity_name}") for entity_name in HIGH_RISK_ENTITY_FEATURE_NAMES):
             non_null = series.dropna()
-            unique_count = int(non_null.nunique(dropna=True))
-            unique_ratio = unique_count / max(1, int(len(non_null)))
-            if unique_count >= HIGH_CARDINALITY_MIN_UNIQUE and unique_ratio >= HIGH_CARDINALITY_RATIO:
+            unique_ratio = int(non_null.nunique(dropna=True)) / max(1, int(len(non_null)))
+            if unique_ratio >= 0.2 or int(non_null.nunique(dropna=True)) >= 20:
                 columns_to_drop.append(column)
-                drop_reasons.append(f"{column_name}：高基數文字欄位，避免產生過大的 one-hot 矩陣")
+                drop_reasons.append(f"{column_name}：高基數實體欄位，避免模型記住名稱而非學到規律")
+                continue
+
+        if _looks_like_text_description(column_name, series):
+            columns_to_drop.append(column)
+            drop_reasons.append(f"{column_name}：文字描述欄位，需專門文字特徵工程後才適合建模")
+            continue
+
+        if _is_target_leakage_feature(series, target_series):
+            columns_to_drop.append(column)
+            warning = f"模型可能發生資料洩漏，已排除與目標欄位「{target_column}」高度重複的欄位「{column_name}」。"
+            drop_reasons.append(f"{column_name}：疑似目標洩漏欄位")
+            leakage_warnings.append(warning)
+            continue
+
+        non_null = series.dropna()
+        unique_count = int(non_null.nunique(dropna=True))
+        unique_ratio = unique_count / max(1, int(len(non_null)))
+        if unique_count >= HIGH_CARDINALITY_MIN_UNIQUE and unique_ratio >= HIGH_CARDINALITY_RATIO:
+            columns_to_drop.append(column)
+            drop_reasons.append(f"{column_name}：高基數欄位，避免產生過大的 one-hot 矩陣")
 
     if columns_to_drop:
         modeling_df = modeling_df.drop(columns=columns_to_drop)
@@ -1291,6 +1406,33 @@ def _is_id_like_column(column_name: str) -> bool:
     if normalized in ID_LIKE_COLUMN_NAMES:
         return True
     return normalized.endswith("_id") or normalized.endswith("_uuid") or normalized.endswith("_guid")
+
+
+def _looks_like_text_description(column_name: str, series: pd.Series) -> bool:
+    normalized = column_name.strip().lower().replace("-", "_").replace(" ", "_")
+    if any(token in normalized for token in ("description", "summary", "notes", "text", "content")):
+        return True
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+    non_null = series.dropna().astype(str)
+    if non_null.empty:
+        return False
+    average_length = float(non_null.str.len().mean() or 0)
+    return average_length >= 80
+
+
+def _is_target_leakage_feature(feature: pd.Series, target: pd.Series) -> bool:
+    aligned = pd.DataFrame({"feature": feature, "target": target}).dropna()
+    if len(aligned) < 5:
+        return False
+    if aligned["feature"].astype(str).equals(aligned["target"].astype(str)):
+        return True
+    feature_numeric = pd.to_numeric(aligned["feature"], errors="coerce")
+    target_numeric = pd.to_numeric(aligned["target"], errors="coerce")
+    valid = feature_numeric.notna() & target_numeric.notna()
+    if int(valid.sum()) < 5:
+        return False
+    return bool(np.allclose(feature_numeric[valid].to_numpy(), target_numeric[valid].to_numpy(), equal_nan=False))
 
 
 def _infer_problem_type(target: pd.Series) -> str:
@@ -1448,11 +1590,37 @@ def _jsonable_param(value: Any) -> Any:
     return value
 
 
-def _save_trained_model(model: Pipeline, model_key: str) -> Path:
+def _detect_metric_leakage_warnings(
+    model_results: list[dict[str, Any]],
+    *,
+    problem_type: str,
+) -> list[str]:
+    warnings: list[str] = []
+    for result in model_results:
+        model_name = str(result.get("model_name") or "模型")
+        if problem_type == "regression" and float(result.get("r2") or 0) >= 0.995:
+            warnings.append(
+                f"{model_name} 的 R² 異常接近 1，模型可能發生資料洩漏，請檢查特徵欄位與目標欄位關係。"
+            )
+        if problem_type == "classification":
+            accuracy = result.get("accuracy")
+            f1 = result.get("f1_score")
+            if (accuracy is not None and float(accuracy) >= 0.995) or (f1 is not None and float(f1) >= 0.995):
+                warnings.append(
+                    f"{model_name} 的分類指標異常接近 1，模型可能發生資料洩漏，請檢查 ID、來源列號或答案欄位是否被當成特徵。"
+                )
+    return list(dict.fromkeys(warnings))
+
+
+def _save_trained_model(model: Any, model_key: str, *, enabled: bool) -> dict[str, Any]:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODEL_DIR / f"{model_key}_{uuid4().hex}.joblib"
-    joblib.dump(model, model_path)
-    return model_path
+    return safe_save_model(
+        model,
+        model_path,
+        max_mb=DEFAULT_MODEL_MAX_MB,
+        enabled=enabled,
+    )
 
 
 def _save_model_results(model_results: list[dict[str, Any]]) -> Path:
@@ -1482,6 +1650,7 @@ def _fit_baseline_model(
     y_train: np.ndarray,
     y_test: np.ndarray,
     problem_type: str,
+    save_model: bool,
 ) -> tuple[dict[str, Any], np.ndarray]:
     started = perf_counter()
     if problem_type == "classification":
@@ -1498,7 +1667,12 @@ def _fit_baseline_model(
     estimator.fit(x_train, y_train)
     predictions = np.asarray(estimator.predict(x_test), dtype=float)
     training_time_seconds = perf_counter() - started
-    model_path = _save_trained_model(estimator, model_key)
+    model_save_status = _save_trained_model(estimator, model_key, enabled=save_model)
+    model_path = (
+        REPO_ROOT / str(model_save_status["path"])
+        if model_save_status.get("saved") and model_save_status.get("path")
+        else None
+    )
     payload: dict[str, Any] = {
         "model_key": model_key,
         "model_name": model_name,
@@ -1508,11 +1682,9 @@ def _fit_baseline_model(
         "mae": round(float(mean_absolute_error(y_test, predictions)), 6),
         "training_time_seconds": round(training_time_seconds, 6),
         "automl_best_params": {},
-        "model_path": str(model_path.relative_to(REPO_ROOT)),
-        "model_url": create_artifact_url(
-            model_path,
-            root=GENERATED_OUTPUTS_DIR,
-        ),
+        "model_path": str(model_save_status.get("path") or ""),
+        "model_url": create_artifact_url(model_path, root=GENERATED_OUTPUTS_DIR) if model_path else "",
+        "model_save_status": model_save_status,
     }
     if problem_type == "classification":
         rounded_predictions = np.rint(predictions).astype(int)
@@ -1589,7 +1761,10 @@ def _create_selected_charts(
             )
 
         if chart_path is None:
-            notes.append(f"{CHART_TITLES.get(chart_type, chart_type)} 無法產生，已略過。")
+            if chart_type == "feature_importance":
+                notes.append("部分特徵名稱無法追蹤，因此不產生特徵重要性解釋。")
+            else:
+                notes.append(f"{CHART_TITLES.get(chart_type, chart_type)} 無法產生，已略過。")
             continue
 
         charts.append(_chart_payload(chart_type, chart_path))
@@ -1663,7 +1838,7 @@ def _create_feature_importance_chart(
 
     feature_names = _get_feature_names(model)
     if len(feature_names) != len(values):
-        feature_names = [f"特徵 {index + 1}" for index in range(len(values))]
+        return None
 
     importance_df = (
         pd.DataFrame({"feature": feature_names, "importance": values})

@@ -60,6 +60,14 @@ from app.services.report_generator import (
 from app.database import initialize_database
 from app.database import repository
 from app.services.run_governance import governed_async_runner, governed_runner
+from app.utils.storage_guard import (
+    cleanup_all_models,
+    cleanup_latest_only,
+    cleanup_large_files,
+    cleanup_old_models,
+    get_storage_status,
+    startup_storage_audit,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GENERATED_OUTPUTS_DIR = REPO_ROOT / "generated_outputs"
@@ -105,6 +113,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup() -> None:
     initialize_database()
+    startup_storage_audit()
 
 
 @app.middleware("http")
@@ -229,6 +238,7 @@ async def start_model_analysis_job(
     model_selection_mode: str = Form("auto"),
     selected_models: str = Form("auto"),
     automl_mode: str = Form("off"),
+    save_model: bool = Form(False),
     files: list[UploadFile] = File(...),
 ) -> AnalysisJobStartResponse:
     snapshots = await _snapshot_uploads(files)
@@ -239,6 +249,7 @@ async def start_model_analysis_job(
         "model_selection_mode": model_selection_mode,
         "selected_models": selected_models,
         "automl_mode": automl_mode,
+        "save_model": save_model,
         "file_count": len(snapshots),
     }
 
@@ -254,6 +265,7 @@ async def start_model_analysis_job(
                         model_selection_mode=model_selection_mode,
                         selected_models=selected_models,
                         automl_mode=automl_mode,
+                        save_model=save_model,
                         progress_callback=progress,
                         should_cancel=should_cancel,
                     )
@@ -267,6 +279,7 @@ async def start_model_analysis_job(
                     model_selection_mode=model_selection_mode,
                     selected_models=selected_models,
                     automl_mode=automl_mode,
+                    save_model=save_model,
                     progress_callback=progress,
                     should_cancel=should_cancel,
                 )
@@ -558,6 +571,7 @@ async def analyze_models(
     model_selection_mode: str = Form("auto"),
     selected_models: str = Form("auto"),
     automl_mode: str = Form("off"),
+    save_model: bool = Form(False),
     file: UploadFile = File(...),
 ) -> ModelAnalysisResponse:
     snapshots = await _snapshot_uploads([file])
@@ -568,6 +582,7 @@ async def analyze_models(
         "model_selection_mode": model_selection_mode,
         "selected_models": selected_models,
         "automl_mode": automl_mode,
+        "save_model": save_model,
     }
 
     async def execute(uploads: list[UploadFile]) -> dict[str, Any]:
@@ -579,6 +594,7 @@ async def analyze_models(
             model_selection_mode=model_selection_mode,
             selected_models=selected_models,
             automl_mode=automl_mode,
+            save_model=save_model,
         )
 
     result = await governed_async_runner(
@@ -608,6 +624,7 @@ async def analyze_merged_models(
     model_selection_mode: str = Form("auto"),
     selected_models: str = Form("auto"),
     automl_mode: str = Form("off"),
+    save_model: bool = Form(False),
     files: list[UploadFile] = File(...),
 ) -> ModelAnalysisResponse:
     snapshots = await _snapshot_uploads(files)
@@ -618,6 +635,7 @@ async def analyze_merged_models(
         "model_selection_mode": model_selection_mode,
         "selected_models": selected_models,
         "automl_mode": automl_mode,
+        "save_model": save_model,
         "file_count": len(snapshots),
     }
 
@@ -630,6 +648,7 @@ async def analyze_merged_models(
             model_selection_mode=model_selection_mode,
             selected_models=selected_models,
             automl_mode=automl_mode,
+            save_model=save_model,
         )
 
     result = await governed_async_runner(
@@ -645,6 +664,42 @@ async def analyze_merged_models(
 @app.get("/api/models/options")
 async def model_options(problem_type: str | None = None) -> dict[str, object]:
     return {"models": get_model_options(problem_type)}
+
+
+@app.get("/api/storage/status")
+async def storage_status() -> dict[str, object]:
+    return get_storage_status()
+
+
+@app.post("/api/storage/cleanup/models")
+async def cleanup_models() -> dict[str, object]:
+    result = cleanup_old_models(keep_latest=5)
+    large_cleanup = cleanup_large_files()
+    return {
+        "cleanup": result,
+        "large_cleanup": large_cleanup,
+        "status": get_storage_status(),
+    }
+
+
+@app.post("/api/storage/cleanup/all-models")
+async def cleanup_all_model_files() -> dict[str, object]:
+    result = cleanup_all_models()
+    return {
+        "cleanup": result,
+        "status": get_storage_status(),
+    }
+
+
+@app.post("/api/storage/cleanup/latest-only")
+async def cleanup_latest_outputs() -> dict[str, object]:
+    result = cleanup_latest_only()
+    large_cleanup = cleanup_large_files()
+    return {
+        "cleanup": result,
+        "large_cleanup": large_cleanup,
+        "status": get_storage_status(),
+    }
 
 
 @app.post(

@@ -11,7 +11,7 @@ import {
   type ReactNode,
   type SetStateAction
 } from "react";
-import type { DatasetAnalysis, MergedDatasetAnalysis } from "@/lib/api";
+import type { DatasetAnalysis, MergedDatasetAnalysis, MultiTablePlan } from "@/lib/api";
 import {
   clearWorkspaceSnapshot,
   loadWorkspaceSnapshot,
@@ -31,6 +31,8 @@ type WorkspaceContextValue = {
   setUploads: Dispatch<SetStateAction<DatasetUploadState[]>>;
   mergedResult: MergedDatasetAnalysis | null;
   setMergedResult: Dispatch<SetStateAction<MergedDatasetAnalysis | null>>;
+  multiTablePlan: MultiTablePlan | null;
+  setMultiTablePlan: Dispatch<SetStateAction<MultiTablePlan | null>>;
   batchNotes: string[];
   setBatchNotes: Dispatch<SetStateAction<string[]>>;
   error: string | null;
@@ -48,6 +50,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [uploads, setUploads] = useState<DatasetUploadState[]>([]);
   const [mergedResult, setMergedResult] = useState<MergedDatasetAnalysis | null>(null);
+  const [multiTablePlan, setMultiTablePlan] = useState<MultiTablePlan | null>(null);
   const [batchNotes, setBatchNotes] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [panelStates, setPanelStates] = useState<Record<string, unknown>>({});
@@ -66,6 +69,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }))
         );
         setMergedResult(snapshot.mergedResult);
+        setMultiTablePlan(snapshot.multiTablePlan ?? null);
         setBatchNotes(snapshot.batchNotes);
         setPanelStates(resetInterruptedLoading(snapshot.panelStates));
         setActiveSourceId(snapshot.activeSourceId);
@@ -89,6 +93,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         savedAt: Date.now(),
         uploads,
         mergedResult,
+        multiTablePlan,
         batchNotes,
         panelStates: resetInterruptedLoading(panelStates),
         activeSourceId
@@ -102,6 +107,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     batchNotes,
     isHydrated,
     mergedResult,
+    multiTablePlan,
     panelStates,
     uploads
   ]);
@@ -109,6 +115,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const clearWorkspace = useCallback(() => {
     setUploads([]);
     setMergedResult(null);
+    setMultiTablePlan(null);
     setBatchNotes([]);
     setError(null);
     setPanelStates({});
@@ -125,6 +132,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setUploads,
         mergedResult,
         setMergedResult,
+        multiTablePlan,
+        setMultiTablePlan,
         batchNotes,
         setBatchNotes,
         error,

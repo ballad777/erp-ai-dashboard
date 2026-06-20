@@ -87,6 +87,54 @@ export type DatasetAnalysis = {
   evidence?: EvidenceItem[];
   terms?: TermDefinition[];
   research_details?: ResearchDetails;
+  understanding?: DatasetUnderstanding;
+  possible_data_topics?: DataTopic[];
+  dataset_type?: DataTopic;
+  confidence_score?: number | null;
+  recommended_analysis_goals?: Array<{ key?: string; label?: string }>;
+  target_recommendations?: TargetRecommendation[];
+  financial_eligibility?: {
+    eligible?: boolean;
+    date_columns?: string[];
+    price_columns?: string[];
+    reasons?: string[];
+  };
+  not_suitable_reasons?: string[];
+};
+
+export type DataTopic = {
+  key?: string;
+  label?: string;
+  confidence_score?: number;
+  evidence_columns?: string[];
+};
+
+export type TargetRecommendation = {
+  purpose?: string;
+  columns?: string[];
+  confidence?: string;
+  reason?: string;
+};
+
+export type DatasetUnderstanding = {
+  file_name?: string;
+  row_count?: number;
+  column_count?: number;
+  columns?: string[];
+  primary_key_candidates?: Array<Record<string, unknown>>;
+  date_columns?: string[];
+  numeric_columns?: string[];
+  categorical_columns?: string[];
+  text_columns?: string[];
+  missing_value_ratio?: number;
+  duplicate_value_ratio?: number;
+  possible_data_topics?: DataTopic[];
+  primary_domain?: DataTopic;
+  confidence_score?: number;
+  not_suitable_reasons?: string[];
+  recommended_analysis_goals?: Array<{ key?: string; label?: string }>;
+  target_recommendations?: TargetRecommendation[];
+  financial_eligibility?: DatasetAnalysis["financial_eligibility"];
 };
 
 export type MergedDatasetAnalysis = DatasetAnalysis & {
@@ -111,7 +159,33 @@ export type DatasetBatchItem = {
 export type MultipleDatasetAnalysis = {
   datasets: DatasetBatchItem[];
   merged: MergedDatasetAnalysis | null;
+  multi_table_plan?: MultiTablePlan | null;
   notes: string[];
+};
+
+export type MultiTablePlan = {
+  recommended_strategy?: string;
+  label?: string;
+  confidence_score?: number;
+  reason?: string;
+  dominant_domain?: DataTopic;
+  common_column_ratio?: number;
+  common_columns?: string[];
+  union_column_count?: number;
+  join_key_candidates?: Array<{
+    key?: string;
+    files?: string[];
+    columns?: string[];
+    reason?: string;
+  }>;
+  available_strategies?: Array<{
+    key?: string;
+    label?: string;
+    description?: string;
+    enabled?: boolean;
+  }>;
+  table_roles?: Array<{ file_name?: string; role?: string }>;
+  warnings?: string[];
 };
 
 export type ModelMetric = {
@@ -127,6 +201,12 @@ export type ModelMetric = {
   automl_best_params: Record<string, unknown>;
   model_path: string;
   model_url: string;
+  model_save_status?: {
+    saved?: boolean;
+    path?: string | null;
+    size_mb?: number;
+    warning?: string | null;
+  };
 };
 
 export type ModelOption = {
@@ -172,6 +252,12 @@ export type ModelAnalysis = {
   charts: GeneratedChart[];
   selected_chart_types: string[];
   notes: string[];
+  leakage_warnings?: string[];
+  model_save_policy?: {
+    save_model?: boolean;
+    max_model_mb?: number;
+    message?: string;
+  };
   run_id?: string | null;
   dataset_id?: string | null;
   run_manifest?: Record<string, unknown>;
@@ -182,6 +268,23 @@ export type ModelAnalysis = {
   chart_stories?: ChartStory[];
   model_guidance?: DecisionBrief["model_guidance"];
   research_details?: ResearchDetails;
+};
+
+export type StorageSize = {
+  bytes: number;
+  mb: number;
+  gb: number;
+};
+
+export type StorageStatus = {
+  generated_outputs: StorageSize;
+  models: StorageSize;
+  charts: StorageSize;
+  reports: StorageSize;
+  data: StorageSize;
+  warning: boolean;
+  warning_message?: string | null;
+  large_model_files: Array<{ path: string; size_mb: number }>;
 };
 
 export type GeneratedCode = {
@@ -404,6 +507,39 @@ async function requestJson<T>(
   }
 }
 
+async function requestGetJson<T>(
+  path: string,
+  { fallbackMessage, timeoutMs }: Omit<RequestJsonOptions, "body">
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "GET",
+      signal: controller.signal
+    });
+    const payload: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const detail = extractApiErrorMessage(payload, fallbackMessage);
+      throw new Error(localizeApiMessage(detail));
+    }
+
+    return payload as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(clientText("讀取等待時間過長，請稍後再試一次。", "The request took too long. Try again later."));
+    }
+    if (error instanceof TypeError) {
+      throw new Error(clientText("目前無法連線到分析服務，請檢查網路後重試。", "The analysis service is unavailable. Check the connection and try again."));
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function extractApiErrorMessage(payload: unknown, fallbackMessage: string): string {
   if (!payload || typeof payload !== "object" || !("detail" in payload)) {
     return fallbackMessage;
@@ -463,6 +599,7 @@ export async function analyzeModels(
   modelSelectionMode: "auto" | "custom",
   selectedModels: string[],
   automlMode: "off" | "quick",
+  saveModel = false,
   jobOptions?: AnalysisJobOptions
 ): Promise<ModelAnalysis> {
   const formData = new FormData();
@@ -473,6 +610,7 @@ export async function analyzeModels(
   formData.append("model_selection_mode", modelSelectionMode);
   formData.append("selected_models", selectedModels.join(",") || "auto");
   formData.append("automl_mode", automlMode);
+  formData.append("save_model", String(saveModel));
 
   const result = await runAnalysisJob<ModelAnalysis>(
     "/api/jobs/models",
@@ -492,6 +630,7 @@ export async function analyzeMergedModels(
   modelSelectionMode: "auto" | "custom",
   selectedModels: string[],
   automlMode: "off" | "quick",
+  saveModel = false,
   jobOptions?: AnalysisJobOptions
 ): Promise<ModelAnalysis> {
   const formData = new FormData();
@@ -504,6 +643,7 @@ export async function analyzeMergedModels(
   formData.append("model_selection_mode", modelSelectionMode);
   formData.append("selected_models", selectedModels.join(",") || "auto");
   formData.append("automl_mode", automlMode);
+  formData.append("save_model", String(saveModel));
 
   const result = await runAnalysisJob<ModelAnalysis>(
     "/api/jobs/models",
@@ -707,6 +847,34 @@ export async function generateMergedReport(
   return withReportUrls(result);
 }
 
+export async function getStorageStatus(): Promise<StorageStatus> {
+  return requestGetJson<StorageStatus>("/api/storage/status", {
+    fallbackMessage: "儲存空間狀態讀取失敗。",
+    timeoutMs: REQUEST_TIMEOUTS.dataset
+  });
+}
+
+export async function cleanupOldModels(): Promise<{ status: StorageStatus }> {
+  return requestJson<{ status: StorageStatus }>("/api/storage/cleanup/models", {
+    fallbackMessage: "清除舊模型失敗。",
+    timeoutMs: REQUEST_TIMEOUTS.dataset
+  });
+}
+
+export async function cleanupAllModels(): Promise<{ status: StorageStatus }> {
+  return requestJson<{ status: StorageStatus }>("/api/storage/cleanup/all-models", {
+    fallbackMessage: "清除全部模型失敗。",
+    timeoutMs: REQUEST_TIMEOUTS.dataset
+  });
+}
+
+export async function cleanupLatestOnly(): Promise<{ status: StorageStatus }> {
+  return requestJson<{ status: StorageStatus }>("/api/storage/cleanup/latest-only", {
+    fallbackMessage: "保留最新分析結果失敗。",
+    timeoutMs: REQUEST_TIMEOUTS.dataset
+  });
+}
+
 function withGeneratedCodeUrls(result: GeneratedCode): GeneratedCode {
   return {
     ...result,
@@ -723,7 +891,7 @@ function withModelAnalysisUrls(result: ModelAnalysis): ModelAnalysis {
     cleaned_dataset_url: `${API_BASE_URL}${result.cleaned_dataset_url}`,
     model_results: result.model_results.map((metric) => ({
       ...metric,
-      model_url: `${API_BASE_URL}${metric.model_url}`
+      model_url: metric.model_url ? `${API_BASE_URL}${metric.model_url}` : ""
     })),
     charts: result.charts.map((chart) => ({
       ...chart,

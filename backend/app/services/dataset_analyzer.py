@@ -13,6 +13,11 @@ import numpy as np
 import pandas as pd
 from fastapi import HTTPException, UploadFile
 
+from app.services.data_understanding import (
+    build_dataset_understanding,
+    plan_multi_table_strategy,
+    recommended_target_column_names,
+)
 from app.services.insight_narrative import build_dataset_brief
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -80,12 +85,18 @@ async def analyze_multiple_uploaded_datasets(files: list[UploadFile]) -> dict[st
 
     merged_analysis: dict[str, Any] | None = None
     notes: list[str] = []
+    multi_table_plan: dict[str, Any] | None = None
 
     if len(loaded_datasets) >= 2:
+        multi_table_plan = plan_multi_table_strategy(loaded_datasets)
         try:
-            merged_df, merge_metadata = merge_dataframes(loaded_datasets)
-            merged_analysis = analyze_dataframe(merged_df, file_name="merged_dataset.csv")
-            merged_analysis.update(merge_metadata)
+            if multi_table_plan["recommended_strategy"] == "union":
+                merged_df, merge_metadata = merge_dataframes(loaded_datasets)
+                merged_analysis = analyze_dataframe(merged_df, file_name="merged_dataset.csv")
+                merged_analysis.update(merge_metadata)
+            else:
+                notes.append(str(multi_table_plan["reason"]))
+                notes.extend(str(warning) for warning in multi_table_plan.get("warnings") or [])
         except Exception as exc:  # noqa: BLE001 - keep successful single-file results visible
             logger.exception("Merged dataset profile failure")
             notes.append(f"合併分析暫時無法建立：{_safe_exception_message(exc)}")
@@ -97,6 +108,7 @@ async def analyze_multiple_uploaded_datasets(files: list[UploadFile]) -> dict[st
     return {
         "datasets": dataset_results,
         "merged": merged_analysis,
+        "multi_table_plan": multi_table_plan,
         "notes": notes,
     }
 
@@ -193,12 +205,13 @@ def merge_dataframes(
     schema_conflicts = _detect_schema_conflicts(datasets, common_columns)
     join_key_candidates = _detect_join_key_candidates(datasets, common_columns)
     common_ratio = len(common_columns) / max(1, len(union_columns))
-    recommended_strategy = "append" if common_ratio >= 0.45 else "separate_analysis"
+    multi_table_plan = plan_multi_table_strategy(datasets)
+    recommended_strategy = str(multi_table_plan["recommended_strategy"])
 
     notes = [
-        f"已依欄位名稱垂直合併 {len(datasets)} 個檔案。",
+        f"已建立 {len(datasets)} 個檔案的合併檢查。",
         f"共同欄位 {len(common_columns)} 個，合併後原始欄位 {len(union_columns)} 個。",
-        "不同檔案缺少的欄位會保留為缺失值，模型訓練時會由系統自動補值。",
+        str(multi_table_plan["reason"]),
     ]
 
     if unique_column_count > 0:
@@ -208,40 +221,23 @@ def merge_dataframes(
         notes.append("這批檔案沒有共同欄位，合併分析會以欄位聯集進行，請優先選擇資料較完整的目標欄位。")
     if schema_conflicts:
         notes.append("部分共同欄位在不同檔案中的資料型別不一致，已列入合併策略檢查。")
-    if recommended_strategy == "separate_analysis":
-        notes.append("共同欄位比例偏低，系統建議先分開分析，再由使用者確認是否合併。")
+    notes.extend(str(warning) for warning in multi_table_plan.get("warnings") or [])
 
     return merged_df, {
         "source_files": [file_name for file_name, _ in datasets],
         "source_file_count": len(datasets),
         "source_row_counts": source_row_counts,
-        "merge_strategy": "依欄位名稱垂直合併，保留欄位聯集",
+        "merge_strategy": "依合併策略檢查後建立欄位聯集資料；不代表系統建議直接垂直合併",
         "merge_notes": notes,
         "merge_plan": {
             "recommended_strategy": recommended_strategy,
-            "available_strategies": [
-                {
-                    "key": "append",
-                    "label": "垂直合併",
-                    "description": "適合欄位結構相近的同類資料。",
-                    "enabled": bool(common_columns),
-                },
-                {
-                    "key": "join",
-                    "label": "依鍵值 Join",
-                    "description": "適合有共同 ID、日期或主鍵欄位的資料。",
-                    "enabled": bool(join_key_candidates),
-                },
-                {
-                    "key": "separate_analysis",
-                    "label": "分開分析",
-                    "description": "適合欄位差異大或尚未確認資料關聯的檔案。",
-                    "enabled": True,
-                },
-            ],
+            "label": multi_table_plan.get("label"),
+            "reason": multi_table_plan.get("reason"),
+            "available_strategies": multi_table_plan.get("available_strategies") or [],
             "common_column_ratio": round(common_ratio, 4),
-            "join_key_candidates": join_key_candidates,
+            "join_key_candidates": multi_table_plan.get("join_key_candidates") or join_key_candidates,
             "schema_conflicts": schema_conflicts,
+            "warnings": multi_table_plan.get("warnings") or [],
         },
         "source_file_column": source_file_column,
         "source_row_column": source_row_column,
@@ -454,7 +450,9 @@ def _summarize_dataframe_safely(
     file_name: str,
 ) -> dict[str, Any]:
     try:
-        return _summarize_dataframe(df)
+        summary = _summarize_dataframe(df)
+        _attach_understanding(summary, df=df, file_name=file_name)
+        return summary
     except HTTPException:
         raise
     except Exception as exc:
@@ -473,6 +471,88 @@ def _safe_exception_message(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         return str(exc.detail)
     return _profile_error_detail()
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _attach_understanding(summary: dict[str, Any], *, df: pd.DataFrame, file_name: str) -> None:
+    understanding = build_dataset_understanding(df, file_name=file_name)
+    recommended_targets = recommended_target_column_names(understanding)
+    summary["understanding"] = understanding
+    summary["possible_data_topics"] = understanding["possible_data_topics"]
+    summary["dataset_type"] = understanding["primary_domain"]
+    summary["confidence_score"] = understanding["confidence_score"]
+    summary["recommended_analysis_goals"] = understanding["recommended_analysis_goals"]
+    summary["target_recommendations"] = understanding["target_recommendations"]
+    summary["financial_eligibility"] = understanding["financial_eligibility"]
+    summary["not_suitable_reasons"] = understanding["not_suitable_reasons"]
+    summary["recommended_target_columns"] = recommended_targets
+    if understanding["primary_domain"].get("key") == "ai_llm":
+        summary.update(_build_ai_llm_dataset_brief(summary, understanding))
+
+
+def _build_ai_llm_dataset_brief(
+    summary: dict[str, Any],
+    understanding: dict[str, Any],
+) -> dict[str, Any]:
+    row_count = int(summary.get("row_count") or 0)
+    column_count = int(summary.get("column_count") or 0)
+    goals = [str(item.get("label")) for item in understanding.get("recommended_analysis_goals") or [] if item.get("label")]
+    target_reasons = [
+        f"{item.get('purpose')}：{', '.join(str(column) for column in item.get('columns') or [])}"
+        for item in understanding.get("target_recommendations") or []
+    ]
+    return {
+        "plain_summary": {
+            "headline": (
+                f"這份資料較像 AI / LLM 模型發展資料集，共有 {row_count:,} 筆與 {column_count:,} 欄；"
+                "建議先做模型能力、成本、API 價格與發布時間軸分析。"
+            ),
+            "what_happened": (
+                "系統偵測到 model_name、benchmark、params、training_flops、API token 價格或能力里程碑等語意欄位，"
+                "因此不把 score 視為體育分數，也不把 release_date 加任意數值欄位視為金融價格序列。"
+            ),
+            "why_it_matters": f"這份資料可優先用來做：{'、'.join(goals[:6])}。",
+            "risk": (
+                "不建議直接垂直合併多張表，也不建議直接相信 R² = 1；"
+                "需先確認 model_name/model_id/organization/date 的關聯與目標欄位定義。"
+            ),
+            "next_action": "先選擇分析目的，再決定是否用 model_name、model_id、organization 或日期做多表關聯。",
+        },
+        "confidence": {
+            "level": "high",
+            "reason": "欄位語意高度符合 AI/LLM 模型發展資料。",
+            "blocking_issues": understanding.get("not_suitable_reasons", [])[:5],
+        },
+        "evidence": [
+            {
+                "label": "資料主題",
+                "value": "AI / LLM 模型發展資料",
+                "source": "欄位名稱與內容語意判斷",
+            },
+            {
+                "label": "建議分析",
+                "value": "、".join(goals[:4]),
+                "source": "AI/LLM 專用分析模板",
+            },
+            {
+                "label": "目標欄位提示",
+                "value": "；".join(target_reasons[:3]) or "目前需手動確認目標欄位",
+                "source": "分析目的對應規則",
+            },
+        ],
+        "research_details": {
+            **_as_dict(summary.get("research_details")),
+            "method": "pandas profile + semantic AI/LLM schema detection + multi-table relationship planning",
+            "limitations": [
+                "score 需搭配 benchmark 定義解讀，不能自動視為唯一目標。",
+                "多表資料需先確認關聯鍵，直接 union 會造成大量缺失值。",
+                "本資料不符合金融技術分析條件，不產生 RSI、MACD、VaR 或回測。",
+            ],
+        },
+    }
 
 
 def _profile_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -533,7 +613,6 @@ def _recommend_target_columns(df: pd.DataFrame) -> list[str]:
                 "profit",
                 "return",
                 "risk",
-                "score",
                 "amount",
                 "value",
             )

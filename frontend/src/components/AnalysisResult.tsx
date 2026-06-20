@@ -90,6 +90,7 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
             {result.parser_warnings.join(" ")}
           </InlineNotice>
         ) : null}
+        <UnderstandingSummary result={result} />
         <PlainSummaryGrid summary={result.plain_summary} />
         {depth !== "simple" ? <EvidenceList evidence={result.evidence} /> : null}
         {depth !== "simple" ? <MetricExplainer terms={result.terms} limit={5} /> : null}
@@ -157,6 +158,65 @@ export function AnalysisResult({ result }: AnalysisResultProps) {
           <NumericTab numericColumns={numericColumns} />
         ) : null}
       </div>
+    </section>
+  );
+}
+
+function UnderstandingSummary({ result }: { result: DatasetAnalysis }) {
+  const { text } = useLocale();
+  const domain = result.dataset_type ?? result.understanding?.primary_domain;
+  const goals = result.recommended_analysis_goals ?? result.understanding?.recommended_analysis_goals ?? [];
+  const reasons = result.not_suitable_reasons ?? result.understanding?.not_suitable_reasons ?? [];
+  const targetRecommendations = result.target_recommendations ?? result.understanding?.target_recommendations ?? [];
+  return (
+    <section className="understanding-summary-card" aria-labelledby="understanding-summary-title">
+      <div className="section-title-row">
+        <div>
+          <span>{text("資料理解", "Data understanding")}</span>
+          <h3 id="understanding-summary-title">
+            {domain?.label ?? text("一般表格資料", "General tabular data")}
+          </h3>
+        </div>
+        <Badge variant="outline">
+          {typeof result.confidence_score === "number"
+            ? `${result.confidence_score}%`
+            : text("需確認", "Review")}
+        </Badge>
+      </div>
+      <div className="understanding-grid">
+        <div>
+          <strong>{text("建議分析方向", "Recommended directions")}</strong>
+          {goals.length > 0 ? (
+            <div className="target-badge-list">
+              {goals.slice(0, 6).map((goal) => (
+                <Badge key={goal.key ?? goal.label} variant="secondary">{goal.label ?? goal.key}</Badge>
+              ))}
+            </div>
+          ) : (
+            <p>{text("先做資料探索，再手動確認分析目的。", "Start with EDA, then confirm the goal manually.")}</p>
+          )}
+        </div>
+        <div>
+          <strong>{text("目標欄位建議", "Target suggestions")}</strong>
+          {targetRecommendations.length > 0 ? (
+            <ul className="compact-explain-list">
+              {targetRecommendations.slice(0, 3).map((recommendation) => (
+                <li key={recommendation.purpose}>
+                  <span>{recommendation.purpose}</span>
+                  <small>{recommendation.columns?.join("、")}</small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>{text("目前無法自動判斷可靠目標欄位。", "No reliable target column was detected automatically.")}</p>
+          )}
+        </div>
+      </div>
+      {reasons.length > 0 ? (
+        <InlineNotice tone="warning" title={text("不適合直接執行", "Do not run directly")}>
+          {reasons.slice(0, 3).join(" ")}
+        </InlineNotice>
+      ) : null}
     </section>
   );
 }

@@ -1,11 +1,12 @@
 import type { DatasetUploadState } from "@/components/WorkspaceProvider";
-import type { MergedDatasetAnalysis } from "@/lib/api";
+import type { MergedDatasetAnalysis, MultiTablePlan } from "@/lib/api";
 
 export type WorkspaceSnapshot = {
   version: 1;
   savedAt: number;
   uploads: DatasetUploadState[];
   mergedResult: MergedDatasetAnalysis | null;
+  multiTablePlan?: MultiTablePlan | null;
   batchNotes: string[];
   panelStates: Record<string, unknown>;
   activeSourceId: string | null;
@@ -79,4 +80,3 @@ function openDatabase() {
     request.onerror = () => reject(request.error);
   });
 }
-

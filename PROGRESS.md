@@ -3639,3 +3639,140 @@ npm run build
 - 把 `source_row_count` 與 `row_count_used` 顯示在模型結果頁，讓使用者清楚知道模型訓練使用範圍。
 - 為大型資料加入使用者可選的「快速 / 平衡 / 全量」模式。
 - 若公開測試者提供失敗檔案，新增對應 fixture 與回歸測試。
+
+---
+
+## 2026-06-20：AI/LLM 資料理解與模型儲存安全重構
+
+### 已完成檔案
+
+- `backend/app/services/data_understanding.py`
+- `backend/app/utils/storage_guard.py`
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/services/financial_analyzer.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/code_generator.py`
+- `backend/app/main.py`
+- `backend/app/schemas.py`
+- `backend/tests/test_ai_llm_understanding.py`
+- `backend/tests/test_storage_and_model_safety.py`
+- `backend/tests/test_analysis_jobs.py`
+- `frontend/src/lib/api.ts`
+- `frontend/src/lib/workspace-storage.ts`
+- `frontend/src/components/WorkspaceProvider.tsx`
+- `frontend/src/components/UploadPanel.tsx`
+- `frontend/src/components/AnalysisResult.tsx`
+- `frontend/src/components/ModelAnalysisPanel.tsx`
+- `frontend/src/app/globals.css`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能與修正
+
+- 新增資料理解模組：
+  - 每個檔案先單獨分析，不再預設合併。
+  - 回傳主鍵候選、日期欄位、數值欄位、類別欄位、文字欄位、缺失比例、重複比例、可能資料主題、可信度、不適合直接分析原因。
+  - 支援 AI / LLM、金融時間序列、體育與一般表格資料判斷。
+- 修正 AI/LLM 資料誤判：
+  - `benchmark_scores.csv`、`capability_milestones.csv`、`compute_estimates.csv`、`models_catalog.csv`、`pricing_history.csv` 會判斷為 AI / LLM 模型發展資料。
+  - `score` 不再被當成體育資料的唯一線索。
+  - `release_date` 不會和任意數值欄位組成金融技術分析。
+- 重構多表策略：
+  - 多檔上傳先推薦 Union / Join / 多表關聯 / 保持分表。
+  - AI/LLM 五檔資料推薦「多表關聯分析」，不建立垂直合併摘要。
+  - 推薦關聯鍵包含 `model_name`、`organization`、`model_id`、`release_date`。
+- 重構金融分析防呆：
+  - 只有真正金融時間序列才啟用 RSI、MACD、VaR。
+  - AI/LLM 資料會回傳替代建議：benchmark 趨勢、API 價格、訓練成本、模型發布時間軸。
+- 重構模型保存：
+  - `save_model=false` 為預設，不保存完整模型物件。
+  - 新增 `safe_save_model`，超過 200 MB 立即刪除。
+  - 每次分析後清理舊模型並刪除超過限制的大模型檔。
+  - `generated_outputs/models` 保持接近 0MB，除非使用者明確要求保存模型。
+- 限制森林模型：
+  - RandomForest / ExtraTrees 的 `n_estimators <= 100`、`max_depth <= 12`、`min_samples_leaf >= 3`、`max_features="sqrt"`。
+  - AutoML grid 不再使用 `max_depth=None` 或超過 100 棵樹。
+- 強化建模防呆：
+  - 排除 `source_row_number`、`source_file`、`file_name`、ID、模型名稱、描述、URL、高基數實體欄位。
+  - 若 R² / accuracy / F1 異常接近 1，回傳資料洩漏警告。
+  - 特徵重要性無法追蹤真實欄位名稱時，不產生假特徵名稱。
+- 新增 storage API：
+  - `GET /api/storage/status`
+  - `POST /api/storage/cleanup/models`
+  - `POST /api/storage/cleanup/all-models`
+  - `POST /api/storage/cleanup/latest-only`
+- 前端流程改為四步：
+  - 資料理解
+  - 合併策略
+  - 分析目標
+  - 模型 / 圖表 / 報告
+- 前端新增：
+  - 資料理解摘要
+  - 合併策略與關聯鍵顯示
+  - 儲存空間管理
+  - 模型保存策略與資料洩漏警告顯示
+  - 未保存模型時不顯示假下載連結。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8002
+
+cd ../frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run dev -- --hostname 127.0.0.1 --port 3010
+```
+
+production 檢查：
+
+```bash
+cd frontend
+npm run build
+npm run start -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q
+
+cd frontend
+npm run build
+```
+
+指定 AI/LLM 五檔驗收：
+
+1. 上傳 `benchmark_scores.csv`、`capability_milestones.csv`、`compute_estimates.csv`、`models_catalog.csv`、`pricing_history.csv`。
+2. 確認所有檔案主題為 AI / LLM 模型發展資料。
+3. 確認合併策略為多表關聯分析。
+4. 確認沒有產生金融 RSI、MACD、VaR 或回測。
+5. 確認 `generated_outputs/models` 沒有超過 200 MB 的模型檔。
+
+### 本次驗證結果
+
+- `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q`：58 passed。
+- `npm run build`：通過。
+- FastAPI TestClient 實測 AI/LLM 五檔：
+  - `domains = ['ai_llm', 'ai_llm', 'ai_llm', 'ai_llm', 'ai_llm']`
+  - `merged = None`
+  - `multi_table_plan.recommended_strategy = multi_table_relationship`
+  - 推薦鍵：`model_name`、`organization`、`model_id`、`release_date`
+  - `/api/finance/analyze` 對 `benchmark_scores.csv` 回傳 400，明確拒絕金融技術分析。
+- storage API：
+  - `/api/storage/status` 正常回傳。
+  - `generated_outputs/models`：4.0K。
+  - `find generated_outputs/models -type f -size +200M`：無結果。
+- production server smoke test：
+  - FastAPI `/health` 回傳 `{"status":"ok","service":"智能金融資料分析 API"}`。
+  - Next production `/app/data` 回傳 HTML。
+
+### Known Issues
+
+- 目前環境沒有 Python / Node Playwright 套件，因此本次無法完成自動化瀏覽器截圖與互動驗證；已完成 production server smoke test、API 端到端驗證、後端測試與前端 build。
+- storage cleanup 的「只保留最新分析結果」目前以各輸出資料夾最近一個檔案為基準；未來若要精準到同一個 run_id，應改為依 `run_manifest` 保留。
+
+### 下一階段要做什麼
+
+- 若要公開給更多人壓測，建議把模型/報告流程拆到背景 worker 與持久化 job queue。
+- 補 Playwright 或 Browser MCP 自動化環境後，加入桌機與手機 RWD 上傳流程截圖測試。
+- 將 AI/LLM 專用圖表模板延伸到專門的模型能力、成本、價格與里程碑 dashboard。
