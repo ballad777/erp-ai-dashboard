@@ -3973,3 +3973,85 @@ npm run build
 - 補足更多真實資料集 fixture，持續驗證通用診斷，不新增單一資料集硬寫規則。
 - 將所有報告 claim 統一格式化為 Evidence / Confidence / Limitations。
 - 前端可再加入「為什麼不能分析」的阻止原因面板，但需維持既有 UI 架構。
+
+## 2026-06-21：外部資料集黑箱測試後的資料理解精準度修正
+
+### 已完成檔案
+
+- `backend/app/services/data_understanding.py`
+- `backend/tests/test_generic_analysis_integrity.py`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能
+
+- 擴充 evidence-based 資料主題辨識：
+  - 天氣資料集
+  - 生物觀測資料集
+  - 醫療或健康資料集
+  - 汽車或車輛資料集
+  - 交通運輸資料集
+  - 農業或產量資料集
+  - 人口與社會統計資料集
+  - 教育或學校資料集
+  - 選舉或政治資料集
+  - 食品品質資料集
+  - 氣候或環境資料集
+- 修正非標準金融欄位辨識：
+  - 支援 `Date + AAPL`。
+  - 支援 `AAPL_x` 日期欄與 `AAPL_y` 價格欄這類 ticker-prefix 欄位。
+  - 保留防呆，不會把 `score`、`source_row_number`、benchmark 欄位當股價。
+- 新增表頭品質診斷：
+  - 若大量欄位名稱像數值資料或第一列資料值，標記 `suspected_header_issue`。
+  - 在 `not_suitable_reasons` 提示使用者先確認或補上正式表頭。
+- 強化一般人可讀摘要：
+  - 新增各資料主題的「可回答什麼」與「不能回答什麼」。
+  - 減少只有「待確認資料集」的空泛摘要。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8002
+
+cd ../frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run dev -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q
+```
+
+外部黑箱測試結果檔：
+
+- `/tmp/datapilot_external_audit_results_final.json`
+
+### 本次驗證結果
+
+- 新增回歸測試紅綠驗證：
+  - 修正前：4 failed。
+  - 修正後：`backend/tests/test_generic_analysis_integrity.py` 14 passed。
+- 後端全測：
+  - `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q`：72 passed。
+- 外部 33 份公開資料集黑箱測試：
+  - 成功讀取與分析：32 份。
+  - 失敗：1 份，Vega `gapminder.csv` URL 回 404。
+  - 吻合：16 份。
+  - 基本吻合：16 份。
+  - 不吻合：0 份。
+  - 可讀性高：19 份。
+  - 可讀性中：13 份。
+
+### Known Issues
+
+- 仍有 13 份外部資料被保守標示為「待確認資料集」。這是安全行為，不是假裝理解；後續可再增加更多 evidence-based domain，但不能為單一資料集硬寫規則。
+- Breast cancer diagnostic 原始檔沒有表頭，系統已標記表頭疑慮，但若使用者不補欄位名稱，仍無法產生高品質醫療解釋。
+- 外部測試使用不驗證憑證的 HTTPS 讀取，原因是目前 `.venv` 的 SSL CA chain 不完整；這只存在測試腳本，不影響正式程式碼。
+
+### 下一階段要做什麼
+
+- 將外部黑箱測試整理成可重跑的測試工具，避免每次手寫腳本。
+- 對仍為「待確認資料集」的資料補更通用的主題 evidence，例如天文、地理、災害、心理實驗、餐飲服務。
+- 將前端結果區補上 `suspected_header_issue` 的明確提示。

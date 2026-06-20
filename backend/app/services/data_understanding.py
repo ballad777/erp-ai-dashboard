@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
+import re
 from typing import Any
 import warnings
 
@@ -188,6 +189,267 @@ SALES_DOMAIN = DomainDefinition(
     strong_clues=("sales", "revenue", "order_id", "quantity", "profit", "營收", "銷售"),
 )
 
+WEATHER_DOMAIN = DomainDefinition(
+    key="weather",
+    label="天氣資料集",
+    clues=(
+        "weather",
+        "precipitation",
+        "rain",
+        "rainfall",
+        "snow",
+        "temp",
+        "temperature",
+        "temp_max",
+        "temp_min",
+        "wind",
+        "humidity",
+        "pressure",
+        "station",
+        "氣溫",
+        "降雨",
+        "雨量",
+        "濕度",
+        "風速",
+    ),
+    strong_clues=("weather", "precipitation", "temp_max", "temp_min", "temperature", "humidity"),
+)
+
+BIOLOGY_DOMAIN = DomainDefinition(
+    key="biology",
+    label="生物觀測資料集",
+    clues=(
+        "species",
+        "genus",
+        "family",
+        "organism",
+        "island",
+        "bill",
+        "flipper",
+        "body_mass",
+        "body",
+        "mass",
+        "sepal",
+        "petal",
+        "sex",
+        "品種",
+        "物種",
+        "生物",
+    ),
+    strong_clues=("species", "body_mass", "flipper", "bill_length", "sepal", "petal", "品種", "物種"),
+)
+
+MEDICAL_DOMAIN = DomainDefinition(
+    key="medical_health",
+    label="醫療或健康資料集",
+    clues=(
+        "patient",
+        "diagnosis",
+        "diagnostic",
+        "disease",
+        "cancer",
+        "tumor",
+        "malignant",
+        "benign",
+        "blood",
+        "pressure",
+        "glucose",
+        "insulin",
+        "bmi",
+        "risk",
+        "health",
+        "medical",
+        "病患",
+        "診斷",
+        "疾病",
+        "腫瘤",
+        "血壓",
+        "血糖",
+    ),
+    strong_clues=("diagnosis", "patient", "cancer", "tumor", "glucose", "病患", "診斷"),
+)
+
+AUTOMOTIVE_DOMAIN = DomainDefinition(
+    key="automotive",
+    label="汽車或車輛資料集",
+    clues=(
+        "car",
+        "cars",
+        "vehicle",
+        "auto",
+        "automobile",
+        "mpg",
+        "mileage",
+        "horsepower",
+        "cylinders",
+        "acceleration",
+        "model_year",
+        "origin",
+        "fuel",
+        "transmission",
+        "engine",
+        "汽車",
+        "車輛",
+        "里程",
+        "油耗",
+        "馬力",
+    ),
+    strong_clues=("mpg", "horsepower", "cylinders", "vehicle", "mileage", "油耗"),
+)
+
+TRANSPORT_DOMAIN = DomainDefinition(
+    key="transport",
+    label="交通運輸資料集",
+    clues=(
+        "taxi",
+        "trip",
+        "passenger",
+        "passengers",
+        "pickup",
+        "dropoff",
+        "fare",
+        "airport",
+        "flight",
+        "airline",
+        "carrier",
+        "origin",
+        "destination",
+        "distance",
+        "delay",
+        "交通",
+        "航班",
+        "機場",
+        "乘客",
+        "車程",
+    ),
+    strong_clues=("pickup", "dropoff", "fare", "airport", "flight", "passengers"),
+)
+
+AGRICULTURE_DOMAIN = DomainDefinition(
+    key="agriculture",
+    label="農業或產量資料集",
+    clues=(
+        "yield",
+        "crop",
+        "barley",
+        "corn",
+        "wheat",
+        "cotton",
+        "farm",
+        "agriculture",
+        "variety",
+        "site",
+        "harvest",
+        "農業",
+        "作物",
+        "產量",
+    ),
+    strong_clues=("yield", "crop", "barley", "agriculture", "variety", "產量"),
+)
+
+DEMOGRAPHICS_DOMAIN = DomainDefinition(
+    key="demographics",
+    label="人口與社會統計資料集",
+    clues=(
+        "population",
+        "people",
+        "age",
+        "sex",
+        "gender",
+        "country",
+        "continent",
+        "life_expectancy",
+        "gdp",
+        "pop",
+        "demographic",
+        "人口",
+        "年齡",
+        "性別",
+    ),
+    strong_clues=("population", "life_expectancy", "gdp", "country", "人口"),
+)
+
+EDUCATION_DOMAIN = DomainDefinition(
+    key="education",
+    label="教育或學校資料集",
+    clues=(
+        "school",
+        "college",
+        "university",
+        "student",
+        "major",
+        "earnings",
+        "education",
+        "score",
+        "grade",
+        "學校",
+        "學生",
+        "教育",
+        "科系",
+    ),
+    strong_clues=("school", "student", "major", "education", "學校", "學生"),
+)
+
+POLITICS_DOMAIN = DomainDefinition(
+    key="politics",
+    label="選舉或政治資料集",
+    clues=(
+        "election",
+        "candidate",
+        "party",
+        "votes",
+        "winner",
+        "result",
+        "district",
+        "precinct",
+        "選舉",
+        "候選人",
+        "政黨",
+        "投票",
+    ),
+    strong_clues=("election", "candidate", "votes", "winner", "選舉"),
+)
+
+FOOD_QUALITY_DOMAIN = DomainDefinition(
+    key="food_quality",
+    label="食品品質資料集",
+    clues=(
+        "quality",
+        "alcohol",
+        "acidity",
+        "sugar",
+        "chlorides",
+        "density",
+        "ph",
+        "sulphates",
+        "wine",
+        "food",
+        "食品",
+        "品質",
+    ),
+    strong_clues=("quality", "alcohol", "acidity", "chlorides", "wine", "品質"),
+)
+
+CLIMATE_DOMAIN = DomainDefinition(
+    key="climate_environment",
+    label="氣候或環境資料集",
+    clues=(
+        "co2",
+        "carbon",
+        "emission",
+        "emissions",
+        "concentration",
+        "climate",
+        "temperature",
+        "anomaly",
+        "ppm",
+        "氣候",
+        "碳",
+        "排放",
+    ),
+    strong_clues=("co2", "carbon", "concentration", "emissions", "ppm"),
+)
+
 GENERIC_DOMAIN = DomainDefinition(
     key="unclassified_dataset",
     label="待確認資料集",
@@ -197,9 +459,20 @@ GENERIC_DOMAIN = DomainDefinition(
 DOMAIN_DEFINITIONS = (
     AI_LLM_DOMAIN,
     FINANCIAL_DOMAIN,
+    WEATHER_DOMAIN,
+    BIOLOGY_DOMAIN,
+    MEDICAL_DOMAIN,
+    AUTOMOTIVE_DOMAIN,
+    TRANSPORT_DOMAIN,
     HOUSING_DOMAIN,
     CUSTOMER_DOMAIN,
     SALES_DOMAIN,
+    AGRICULTURE_DOMAIN,
+    DEMOGRAPHICS_DOMAIN,
+    EDUCATION_DOMAIN,
+    POLITICS_DOMAIN,
+    FOOD_QUALITY_DOMAIN,
+    CLIMATE_DOMAIN,
     SPORTS_DOMAIN,
 )
 
@@ -294,6 +567,7 @@ class DataDiagnostics:
             if _looks_like_leakage_or_prediction_column(str(column))
         ]
         outlier_columns = _detect_outlier_columns(df)
+        header_issue = _detect_header_issue(columns)
         candidate_target_columns = TargetAdvisor().recommend(df, diagnostics=None)
         usable_feature_count = len(
             [
@@ -324,6 +598,8 @@ class DataDiagnostics:
             "candidate_target_columns": candidate_target_columns,
             "possible_leakage_columns": possible_leakage_columns,
             "outlier_columns": outlier_columns,
+            "suspected_header_issue": header_issue["suspected"],
+            "header_issue_reasons": header_issue["reasons"],
             "class_balance": class_balance,
             "usable_feature_count": int(usable_feature_count),
         }
@@ -352,7 +628,7 @@ class DataUnderstandingEngine:
         primary_key_candidates = _detect_primary_key_candidates(df)
         missing_ratio = float(df.isna().sum().sum() / max(1, row_count * column_count))
         duplicate_ratio = float(df.duplicated().sum() / max(1, row_count))
-        domain_scores = _score_domains(columns, file_name=file_name)
+        domain_scores = _score_domains(df, columns, file_name=file_name, date_columns=date_columns)
         possible_topics = _possible_topics(domain_scores)
         primary_domain = possible_topics[0] if possible_topics else _topic_payload(GENERIC_DOMAIN, 35, [])
         confidence_breakdown = ConfidenceScorer().score(
@@ -782,13 +1058,24 @@ class DatasetStoryGenerator:
             CUSTOMER_DOMAIN.key: ("客戶行為資料", ["哪些客戶欄位與分群、流失或消費目標相關？", "是否可做分類、分群或留存探索？"], ["不能在沒有同意與合規審查下做敏感個資決策。"]),
             SALES_DOMAIN.key: ("銷售績效資料", ["哪些產品、地區或期間欄位與銷售/營收一起變動？", "是否能預測銷售或利潤？"], ["不能單靠內部表格推論市場總需求。"]),
             SPORTS_DOMAIN.key: ("體育表現資料", ["哪些球員或球隊欄位與表現指標相關？", "是否能建立排名或分群？"], ["不能只因為有 score 就判斷為體育資料。"]),
+            WEATHER_DOMAIN.key: ("天氣資料", ["降雨、氣溫或風速是否有季節變化？", "是否能用日期與氣象欄位預測天氣類別？"], ["不能只靠單一城市資料推論其他地區天氣。"]),
+            BIOLOGY_DOMAIN.key: ("生物觀測資料", ["哪些測量欄位最能區分物種或群體？", "是否能用外觀特徵預測分類標籤？"], ["不能把相關性直接解讀成生物因果。"]),
+            MEDICAL_DOMAIN.key: ("醫療或健康資料", ["哪些特徵與診斷、風險或健康結果一起變動？", "是否能建立初步分類或風險排序？"], ["不能直接作為醫療診斷；需專業驗證與合規審查。"]),
+            AUTOMOTIVE_DOMAIN.key: ("汽車或車輛資料", ["哪些車輛特徵與油耗、馬力或價格一起變動？", "是否能比較不同車款或年份的差異？"], ["不能只靠表格推論維修、安全或市場全貌。"]),
+            TRANSPORT_DOMAIN.key: ("交通運輸資料", ["路線、距離、時間或乘客數如何影響旅程結果？", "是否能找出延誤、費用或流量異常？"], ["不能在沒有外部事件資料時直接判定原因。"]),
+            AGRICULTURE_DOMAIN.key: ("農業或產量資料", ["不同作物、品種、地區或年份的產量差異？", "哪些欄位與產量或出口表現一起變動？"], ["不能只靠觀測資料推論氣候或政策造成的因果。"]),
+            DEMOGRAPHICS_DOMAIN.key: ("人口與社會統計資料", ["人口、年齡、性別或國家指標如何變化？", "是否能比較不同地區或年份的差異？"], ["不能忽略資料定義、抽樣方式與時間背景。"]),
+            EDUCATION_DOMAIN.key: ("教育或學校資料", ["不同學校、科系或群體的結果差異？", "哪些欄位與成績、收入或表現一起變動？"], ["不能只靠表格資料判定教育品質或個人能力。"]),
+            POLITICS_DOMAIN.key: ("選舉或政治資料", ["候選人、政黨或地區結果如何分布？", "是否能比較勝負、票數或支持度差異？"], ["不能把歷史選舉資料直接當成未來預測。"]),
+            FOOD_QUALITY_DOMAIN.key: ("食品品質資料", ["哪些化學或感官欄位與品質評分一起變動？", "是否能建立品質分類或評分模型？"], ["不能取代實驗室檢驗或食品安全判定。"]),
+            CLIMATE_DOMAIN.key: ("氣候或環境資料", ["濃度、排放或環境指標是否有長期趨勢？", "哪些時間點變化最明顯？"], ["不能只靠單一表格完成完整氣候歸因。"]),
         }
         subject, can_answer, cannot_answer = labels.get(
             key,
             ("待確認資料", ["資料有哪些欄位與缺失值？", "哪些欄位可能適合作為分析目標？"], ["尚未確認業務語意前，不適合直接做決策。"]),
         )
         return {
-            "one_sentence": f"這份資料目前推薦類型為「{primary_domain.get('label', subject)}」，共有 {row_count:,} 筆與 {column_count:,} 欄；若證據不足需人工確認。",
+            "one_sentence": f"這份資料較像「{primary_domain.get('label', subject)}」，共有 {row_count:,} 筆與 {column_count:,} 欄；建議先確認欄位定義，再選擇分析目的。",
             "what_is_this": f"系統只根據目前資料欄位與型態判斷；檔名「{file_name}」僅作低權重輔助訊號。",
             "contains": _story_column_groups(numeric_columns, categorical_columns, date_columns),
             "can_answer": can_answer,
@@ -983,6 +1270,38 @@ def _detect_outlier_columns(df: pd.DataFrame) -> list[dict[str, Any]]:
     return outliers
 
 
+def _detect_header_issue(columns: list[str]) -> dict[str, Any]:
+    if not columns:
+        return {"suspected": False, "reasons": []}
+    numeric_like = 0
+    short_code_like = 0
+    value_like = 0
+    for column in columns:
+        name = str(column).strip()
+        normalized = _normalize_name(name)
+        if re.fullmatch(r"-?\d+(\.\d+)?", name):
+            numeric_like += 1
+            value_like += 1
+            continue
+        if re.fullmatch(r"-?\d+(\.\d+)?[eE][+-]?\d+", name):
+            numeric_like += 1
+            value_like += 1
+            continue
+        if len(normalized) <= 2 and normalized not in {"id", "ph"}:
+            short_code_like += 1
+        if re.fullmatch(r"[a-z]?\d+(\.\d+)?", normalized):
+            value_like += 1
+    total = max(1, len(columns))
+    reasons: list[str] = []
+    if numeric_like / total >= 0.35:
+        reasons.append("超過三分之一欄位名稱像數值資料。")
+    if (numeric_like + short_code_like) / total >= 0.5 and total >= 5:
+        reasons.append("多數欄位名稱過短或像資料值，可能缺少正式表頭。")
+    if value_like >= 3 and total >= 5:
+        reasons.append("多個欄位名稱像第一列資料值。")
+    return {"suspected": bool(reasons), "reasons": reasons}
+
+
 def _story_column_groups(
     numeric_columns: list[str],
     categorical_columns: list[str],
@@ -1073,7 +1392,7 @@ def is_financial_timeseries_dataset(df: pd.DataFrame, file_name: str = "dataset.
     return bool(eligibility.get("eligible")), understanding
 
 
-def _score_domains(columns: list[str], *, file_name: str) -> list[dict[str, Any]]:
+def _score_domains(df: pd.DataFrame, columns: list[str], *, file_name: str, date_columns: list[str]) -> list[dict[str, Any]]:
     normalized_columns = [_normalize_name(column) for column in columns]
     file_hint = _normalize_name(file_name)
     scored: list[dict[str, Any]] = []
@@ -1088,6 +1407,16 @@ def _score_domains(columns: list[str], *, file_name: str) -> list[dict[str, Any]
                 score += 2 + min(3, len(matched_clues))
             if any(strong in normalized for strong in definition.strong_clues):
                 score += 5
+            if definition.key == FINANCIAL_DOMAIN.key and _is_financial_price_column(original, df[original]):
+                evidence.append(original)
+                score += 7
+        if definition.key == FINANCIAL_DOMAIN.key and date_columns:
+            score += 5
+            evidence.extend(column for column in date_columns if column not in evidence)
+            for price_column in _financial_price_columns(df, date_columns):
+                if price_column not in evidence:
+                    evidence.append(price_column)
+                    score += 7
         if any(clue in file_hint for clue in definition.clues) and score >= 4:
             score += 1
         if score > 0 and len(set(evidence)) >= 2:
@@ -1124,7 +1453,7 @@ def _dedupe_topics(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _topic_payload(definition: DomainDefinition, confidence_score: int, evidence: list[str]) -> dict[str, Any]:
     counter_evidence: list[str] = []
-    if definition.key == FINANCIAL_DOMAIN.key and not any(_normalize_name(column) in FINANCIAL_PRICE_NAMES for column in evidence):
+    if definition.key == FINANCIAL_DOMAIN.key and not any(_is_financial_price_column(column) or _ticker_prefix(column) for column in evidence):
         counter_evidence.append("尚未同時確認日期欄位與標準金融價格欄位。")
     if len(evidence) < 3 and definition.key != GENERIC_DOMAIN.key:
         counter_evidence.append("可用證據欄位偏少，資料類型仍需人工確認。")
@@ -1228,10 +1557,7 @@ def _financial_eligibility(
     primary_domain_key: str,
     date_columns: list[str],
 ) -> dict[str, Any]:
-    price_columns = [
-        str(column) for column in df.columns
-        if _is_financial_price_column(str(column)) and pd.to_numeric(df[column], errors="coerce").notna().sum() >= 6
-    ]
+    price_columns = _financial_price_columns(df, date_columns)
     reasons: list[str] = []
     if primary_domain_key != FINANCIAL_DOMAIN.key:
         reasons.append("資料主題不是金融時間序列。")
@@ -1248,13 +1574,63 @@ def _financial_eligibility(
     }
 
 
-def _is_financial_price_column(column_name: str) -> bool:
+def _financial_price_columns(df: pd.DataFrame, date_columns: list[str]) -> list[str]:
+    columns: list[str] = []
+    for column in df.columns:
+        column_name = str(column)
+        if _is_financial_price_column(column_name, df[column]):
+            columns.append(column_name)
+    if columns or not date_columns:
+        return columns
+
+    date_prefixes = {
+        prefix for column in date_columns
+        if (prefix := _ticker_prefix(str(column)))
+    }
+    if not date_prefixes:
+        return columns
+    for column in df.columns:
+        column_name = str(column)
+        if column_name in date_columns:
+            continue
+        if _ticker_prefix(column_name) not in date_prefixes:
+            continue
+        numeric_values = pd.to_numeric(df[column], errors="coerce").dropna()
+        if len(numeric_values) < 6:
+            continue
+        if float(numeric_values.nunique(dropna=True) / max(1, len(numeric_values))) < 0.2:
+            continue
+        columns.append(column_name)
+    return columns
+
+
+def _ticker_prefix(column_name: str) -> str | None:
+    match = re.fullmatch(r"([A-Z]{1,5})(?:[\._ -][A-Za-z]{1,12})?", column_name.strip())
+    return match.group(1) if match else None
+
+
+def _is_financial_price_column(column_name: str, series: pd.Series | None = None) -> bool:
     normalized = _normalize_name(column_name)
     if normalized in {"source_row_number", "row_number", "benchmark_score", "score", "score_pct", "max_score"}:
         return False
     if any(context in normalized for context in NON_FINANCIAL_PRICE_CONTEXT):
         return False
-    return normalized in FINANCIAL_PRICE_NAMES or normalized.endswith("_close") or normalized.endswith("_price")
+    if normalized in FINANCIAL_PRICE_NAMES or normalized.endswith("_close") or normalized.endswith("_price"):
+        return True
+    original = column_name.strip()
+    ticker_like = bool(re.fullmatch(r"[A-Z]{1,5}", original)) or bool(
+        re.fullmatch(r"[A-Z]{1,5}[\._ -]?(close|price|open|high|low|adjclose|adjustedclose)", original, flags=re.IGNORECASE)
+    )
+    if not ticker_like:
+        return False
+    if series is None:
+        return True
+    numeric_values = pd.to_numeric(series, errors="coerce").dropna()
+    if len(numeric_values) < 6:
+        return False
+    if float(numeric_values.nunique(dropna=True) / max(1, len(numeric_values))) < 0.2:
+        return False
+    return True
 
 
 def _not_suitable_reasons(
@@ -1265,6 +1641,9 @@ def _not_suitable_reasons(
     target_recommendations: list[dict[str, Any]],
 ) -> list[str]:
     reasons: list[str] = []
+    header_issue = _detect_header_issue([str(column) for column in df.columns])
+    if header_issue["suspected"]:
+        reasons.append("欄位名稱疑似不是正式表頭，可能是資料第一列被誤讀為欄位名稱；請先確認或補上表頭。")
     if primary_domain_key == AI_LLM_DOMAIN.key:
         reasons.append("不適合直接套用 RSI、MACD、VaR 或回測，因為 benchmark score 與 API 價格不是股價。")
         reasons.append("若同時上傳多張表，不建議直接垂直合併，應先確認 model_name、model_id、organization 或日期關聯。")

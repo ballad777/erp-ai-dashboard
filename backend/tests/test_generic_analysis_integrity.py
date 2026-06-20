@@ -208,3 +208,74 @@ def test_data_diagnostics_contains_required_generic_fields() -> None:
         "usable_feature_count",
     ]:
         assert key in diagnostics
+
+
+def test_non_standard_ticker_price_column_is_financial_when_date_exists() -> None:
+    df = pd.DataFrame(
+        {
+            "Date": pd.date_range("2014-01-01", periods=30),
+            "AAPL": [90 + index * 0.3 for index in range(30)],
+        }
+    )
+
+    understanding = build_dataset_understanding(df, file_name="apple_stock.csv")
+
+    assert understanding["primary_domain"]["key"] == "financial_timeseries"
+    assert understanding["financial_eligibility"]["eligible"] is True
+    assert "AAPL" in understanding["financial_eligibility"]["price_columns"]
+
+
+def test_weather_dataset_gets_specific_evidence_based_story() -> None:
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=30),
+            "precipitation": [0, 1, 0.2, 0, 2, 0.5] * 5,
+            "temp_max": [18, 19, 20, 21, 18, 17] * 5,
+            "temp_min": [10, 11, 12, 13, 10, 9] * 5,
+            "wind": [3.2, 2.8, 4.1, 3.9, 5.0, 2.5] * 5,
+            "weather": ["sun", "rain", "sun", "cloud", "rain", "sun"] * 5,
+        }
+    )
+
+    understanding = build_dataset_understanding(df, file_name="weather_observations.csv")
+
+    assert understanding["primary_domain"]["key"] == "weather"
+    assert "天氣" in understanding["dataset_story"]["one_sentence"]
+    assert any("降雨" in item or "氣溫" in item for item in understanding["dataset_story"]["can_answer"])
+
+
+def test_no_header_like_columns_are_flagged_for_human_review() -> None:
+    df = pd.DataFrame(
+        {
+            "842302": [842517, 843009, 843483, 843584],
+            "M": ["M", "B", "M", "B"],
+            "17.99": [20.57, 19.69, 11.42, 20.29],
+            "10.38": [17.77, 21.25, 20.38, 14.34],
+            "122.8": [132.9, 130.0, 77.58, 135.1],
+        }
+    )
+
+    understanding = build_dataset_understanding(df, file_name="wdbc.data")
+
+    assert understanding["data_diagnostics"]["suspected_header_issue"] is True
+    assert any("表頭" in reason for reason in understanding["not_suitable_reasons"])
+
+
+def test_biology_columns_get_specific_story_without_dataset_name_hardcode() -> None:
+    df = pd.DataFrame(
+        {
+            "species": ["A", "A", "B", "B", "C", "C"],
+            "island": ["north", "south", "north", "south", "north", "south"],
+            "bill_length_mm": [39.1, 40.3, 45.2, 46.1, 50.0, 51.3],
+            "bill_depth_mm": [18.7, 18.2, 15.8, 15.2, 14.1, 14.5],
+            "flipper_length_mm": [181, 186, 210, 215, 220, 225],
+            "body_mass_g": [3750, 3800, 4500, 4550, 5100, 5200],
+        }
+    )
+
+    understanding = build_dataset_understanding(df, file_name="field_measurements.csv")
+
+    assert understanding["primary_domain"]["key"] == "biology"
+    assert understanding["target_recommendations"][0]["column"] == "species"
+    assert "生物" in understanding["dataset_story"]["one_sentence"]
+    assert "待確認資料集" not in understanding["dataset_story"]["one_sentence"]

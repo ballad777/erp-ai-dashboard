@@ -57,6 +57,12 @@ WorkspaceProvider 會使用 IndexedDB 保存目前瀏覽器中的本機檔案、
 
 金融分析必須同時具備日期欄位與金融價格欄位，例如 `close`、`price`、`open`、`high`、`low` 或 `adjusted_close`。若資料不符合金融時間序列，API 會回傳明確錯誤與替代分析建議。
 
+金融時間序列也支援常見非標準欄位：若資料同時具備日期欄位與 ticker-like 數值欄位，例如 `AAPL`、`AAPL_y` 或 `MSFT.Close`，系統會把它視為金融價格候選，但仍會附 evidence、confidence 與 limitations，避免把 `score`、`source_row_number` 或 benchmark 欄位誤判為價格。
+
+資料理解引擎已擴充更多 evidence-based 主題，包括天氣、生物觀測、醫療健康、汽車、交通運輸、農業、人口統計、教育、選舉政治、食品品質與氣候環境。這些判斷只依目前欄位語意與資料型態成立；證據不足時仍會回到「待確認資料集」。
+
+若欄位名稱像資料值而不是正式表頭，例如大量 `17.99`、`122.8` 這類數字欄名，系統會標記 `suspected_header_issue`，並在不適合原因中提示先補上表頭再分析。
+
 模型訓練預設不保存完整 sklearn pipeline、RandomForest、ExtraTrees 或 AutoML 物件。一般分析只保留：
 
 - `model_results.xlsx`
