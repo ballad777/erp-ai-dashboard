@@ -55,7 +55,7 @@ const workflow: AgentWorkflow = {
           model_key: "random_forest",
           model_name: "隨機森林",
           purpose: "處理非線性表格資料。",
-          suitable_data_types: ["一般表格資料"],
+          suitable_data_types: ["已確認目標欄位的表格資料"],
           difficulty: "中級",
           use_cases: ["銷售預測"],
           why_recommended: "資料含多個欄位且可能有非線性關係。",

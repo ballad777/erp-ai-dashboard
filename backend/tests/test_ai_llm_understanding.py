@@ -91,7 +91,7 @@ def test_ai_llm_tables_are_not_sports_or_financial() -> None:
 def test_ai_llm_multi_table_strategy_is_relationship_not_union() -> None:
     plan = plan_multi_table_strategy(_ai_llm_tables())
 
-    assert plan["recommended_strategy"] == "multi_table_relationship"
+    assert plan["recommended_strategy"] == "relational_analysis"
     assert plan["label"] == "多表關聯分析"
     assert plan["common_column_ratio"] < 0.75
     keys = {candidate["key"] for candidate in plan["join_key_candidates"]}

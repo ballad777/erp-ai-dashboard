@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
+from fastapi import HTTPException
 
 from app.services.model_runner import MODEL_DIR, _model_catalog, run_model_analysis
 from app.utils.storage_guard import cleanup_old_models, safe_save_model
@@ -99,19 +101,18 @@ def test_source_row_number_is_not_used_as_feature_and_leakage_is_warned() -> Non
         }
     )
 
-    result = run_model_analysis(
-        df,
-        file_name="leakage.csv",
-        target_column="target",
-        model_selection_mode="custom",
-        selected_models="ridge",
-        chart_types="model_comparison",
-    )
+    with pytest.raises(HTTPException) as exc:
+        run_model_analysis(
+            df,
+            file_name="leakage.csv",
+            target_column="target",
+            model_selection_mode="custom",
+            selected_models="ridge",
+            chart_types="model_comparison",
+        )
 
-    joined_notes = " ".join(result["notes"])
-    assert "source_row_number" in joined_notes
-    assert "資料洩漏" in joined_notes
-    assert result["feature_count_used"] == 1
+    assert exc.value.status_code == 400
+    assert "可用特徵少於 2" in str(exc.value.detail)
 
 
 def test_near_perfect_metric_adds_leakage_warning() -> None:

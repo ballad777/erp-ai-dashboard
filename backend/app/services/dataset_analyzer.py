@@ -491,6 +491,9 @@ def _attach_understanding(summary: dict[str, Any], *, df: pd.DataFrame, file_nam
     summary["target_recommendations"] = understanding["target_recommendations"]
     summary["financial_eligibility"] = understanding["financial_eligibility"]
     summary["not_suitable_reasons"] = understanding["not_suitable_reasons"]
+    summary["data_diagnostics"] = understanding.get("data_diagnostics", {})
+    summary["task_recommendations"] = understanding.get("task_recommendations", [])
+    summary["analysis_context"] = understanding.get("analysis_context", {})
     summary["recommended_target_columns"] = recommended_targets
     summary.update(build_dataset_brief(summary))
     if understanding["primary_domain"].get("key") == "ai_llm":

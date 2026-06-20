@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Any
 import warnings
 
@@ -15,23 +17,6 @@ class DomainDefinition:
     clues: tuple[str, ...]
     strong_clues: tuple[str, ...] = ()
 
-
-IRIS_DOMAIN = DomainDefinition(
-    key="iris_classification",
-    label="鳶尾花分類資料集",
-    clues=(
-        "iris",
-        "species",
-        "class",
-        "sepal",
-        "sepal_length",
-        "sepal_width",
-        "petal",
-        "petal_length",
-        "petal_width",
-    ),
-    strong_clues=("species", "sepal", "petal", "petallengthcm", "petalwidthcm"),
-)
 
 AI_LLM_DOMAIN = DomainDefinition(
     key="ai_llm",
@@ -210,7 +195,6 @@ GENERIC_DOMAIN = DomainDefinition(
 )
 
 DOMAIN_DEFINITIONS = (
-    IRIS_DOMAIN,
     AI_LLM_DOMAIN,
     FINANCIAL_DOMAIN,
     HOUSING_DOMAIN,
@@ -222,6 +206,26 @@ DOMAIN_DEFINITIONS = (
 DATE_NAME_HINTS = ("date", "time", "timestamp", "year_month", "release_date", "created_at", "updated_at")
 ID_NAME_HINTS = ("id", "uuid", "guid", "index", "row_number")
 TEXT_NAME_HINTS = ("description", "summary", "notes", "text", "content", "url")
+TARGET_NAME_HINTS = (
+    "target",
+    "label",
+    "class",
+    "category",
+    "species",
+    "price",
+    "sales",
+    "revenue",
+    "profit",
+    "amount",
+    "value",
+    "score",
+    "result",
+    "outcome",
+    "status",
+    "churn",
+    "risk",
+)
+SUBMISSION_NAME_HINTS = ("submission", "submit", "prediction", "predicted", "answer")
 FINANCIAL_PRICE_NAMES = {
     "close",
     "price",
@@ -244,6 +248,90 @@ NON_FINANCIAL_PRICE_CONTEXT = (
 )
 
 
+class DataDiagnostics:
+    def analyze(self, df: pd.DataFrame) -> dict[str, Any]:
+        row_count = int(len(df))
+        column_count = int(df.shape[1])
+        columns = [str(column) for column in df.columns]
+        missing_ratio_by_column = {
+            str(column): round(float(df[column].isna().mean()), 6)
+            for column in df.columns
+        }
+        unique_ratio_by_column: dict[str, float] = {}
+        constant_columns: list[str] = []
+        high_cardinality_columns: list[str] = []
+        class_balance: dict[str, Any] = {}
+
+        for column in df.columns:
+            column_name = str(column)
+            non_null = df[column].dropna()
+            unique_count = int(non_null.nunique(dropna=True))
+            unique_ratio = unique_count / max(1, int(len(non_null)))
+            unique_ratio_by_column[column_name] = round(unique_ratio, 6)
+            if unique_count <= 1:
+                constant_columns.append(column_name)
+            if unique_count >= HIGH_CARDINALITY_MIN_UNIQUE_FOR_DIAGNOSTICS or unique_ratio >= 0.85:
+                high_cardinality_columns.append(column_name)
+            if 2 <= unique_count <= 30 and not pd.api.types.is_numeric_dtype(non_null):
+                counts = non_null.astype(str).value_counts(dropna=True)
+                class_balance[column_name] = {
+                    "classes": int(len(counts)),
+                    "min_count": int(counts.min()) if not counts.empty else 0,
+                    "max_count": int(counts.max()) if not counts.empty else 0,
+                    "minority_ratio": round(float(counts.min() / max(1, counts.sum())), 6) if not counts.empty else 0,
+                }
+
+        id_like_columns = [
+            str(column) for column in df.columns
+            if _is_id_like_column_name(str(column), df[column])
+        ]
+        datetime_columns = _detect_date_columns(df)
+        numeric_columns = [str(column) for column in df.select_dtypes(include="number").columns]
+        text_columns = _detect_text_columns(df)
+        categorical_columns = _detect_categorical_columns(df, text_columns=text_columns)
+        possible_leakage_columns = [
+            str(column) for column in df.columns
+            if _looks_like_leakage_or_prediction_column(str(column))
+        ]
+        outlier_columns = _detect_outlier_columns(df)
+        candidate_target_columns = TargetAdvisor().recommend(df, diagnostics=None)
+        usable_feature_count = len(
+            [
+                column for column in df.columns
+                if str(column) not in id_like_columns
+                and str(column) not in constant_columns
+                and str(column) not in text_columns
+                and not _looks_like_leakage_or_prediction_column(str(column))
+            ]
+        )
+
+        return {
+            "row_count": row_count,
+            "column_count": column_count,
+            "column_names": columns,
+            "dtypes": {str(column): str(dtype) for column, dtype in df.dtypes.items()},
+            "missing_ratio": round(float(df.isna().sum().sum() / max(1, row_count * column_count)), 6),
+            "missing_ratio_by_column": missing_ratio_by_column,
+            "duplicate_ratio": round(float(df.duplicated().sum() / max(1, row_count)), 6),
+            "unique_ratio": unique_ratio_by_column,
+            "constant_columns": constant_columns,
+            "id_like_columns": id_like_columns,
+            "datetime_columns": datetime_columns,
+            "numeric_columns": numeric_columns,
+            "categorical_columns": categorical_columns,
+            "text_columns": text_columns,
+            "high_cardinality_columns": high_cardinality_columns,
+            "candidate_target_columns": candidate_target_columns,
+            "possible_leakage_columns": possible_leakage_columns,
+            "outlier_columns": outlier_columns,
+            "class_balance": class_balance,
+            "usable_feature_count": int(usable_feature_count),
+        }
+
+
+HIGH_CARDINALITY_MIN_UNIQUE_FOR_DIAGNOSTICS = 500
+
+
 class DataUnderstandingEngine:
     """Rule-based semantic profiler for uploaded tabular datasets.
 
@@ -253,6 +341,7 @@ class DataUnderstandingEngine:
     """
 
     def analyze(self, df: pd.DataFrame, file_name: str) -> dict[str, Any]:
+        diagnostics = DataDiagnostics().analyze(df)
         columns = [str(column) for column in df.columns]
         row_count = int(len(df))
         column_count = int(len(columns))
@@ -277,10 +366,9 @@ class DataUnderstandingEngine:
             primary_domain_key=str(primary_domain["key"]),
             date_columns=date_columns,
         )
-        target_recommendations = TargetRecommendationEngine().recommend(
-            df,
-            primary_domain_key=str(primary_domain["key"]),
-        )
+        task_router = TaskRouter()
+        executable_tasks = task_router.route(df=df, diagnostics=diagnostics, primary_domain=primary_domain)
+        target_recommendations = TargetAdvisor().recommend(df, diagnostics=diagnostics)
         dataset_story = DatasetStoryGenerator().generate(
             df=df,
             file_name=file_name,
@@ -319,6 +407,9 @@ class DataUnderstandingEngine:
             "recommended_analysis_goals": _recommended_analysis_goals(str(primary_domain["key"])),
             "target_recommendations": target_recommendations,
             "financial_eligibility": financial_eligibility,
+            "data_diagnostics": diagnostics,
+            "task_recommendations": executable_tasks,
+            "analysis_context": _analysis_context_payload(df=df, file_name=file_name, columns=columns),
         }
 
 
@@ -416,151 +507,86 @@ class ConfidenceScorer:
         return min(15, score)
 
 
-class TargetRecommendationEngine:
+class TargetAdvisor:
     def recommend(
         self,
         df: pd.DataFrame,
         *,
-        primary_domain_key: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        if primary_domain_key == IRIS_DOMAIN.key:
-            return self._iris_targets(df)
-        if primary_domain_key == AI_LLM_DOMAIN.key:
-            return self._ai_llm_targets(df)
-
-        candidates = self._domain_targets(df, primary_domain_key)
-        candidates.extend(self._generic_targets(df))
+        candidates = self._generic_targets(df, diagnostics=diagnostics or {})
         return _dedupe_target_candidates(candidates)[:5]
 
-    def _iris_targets(self, df: pd.DataFrame) -> list[dict[str, Any]]:
-        lookup = {_normalize_name(str(column)): str(column) for column in df.columns}
+    def _generic_targets(self, df: pd.DataFrame, *, diagnostics: dict[str, Any]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
-        species = lookup.get("species") or lookup.get("class") or lookup.get("target")
-        if species:
-            candidates.append(
-                _target_payload(
-                    column=species,
-                    task_type="classification",
-                    confidence_score=98,
-                    purpose="花朵品種分類",
-                    reasons=["類別型欄位", "類別分布合理", "常見分類目標", "唯一值數量合理"],
-                )
-            )
-        ordered_regression = [
-            ("petallengthcm", 76),
-            ("petal_length", 76),
-            ("petalwidthcm", 72),
-            ("petal_width", 72),
-            ("sepallengthcm", 64),
-            ("sepal_length", 64),
-            ("sepalwidthcm", 58),
-            ("sepal_width", 58),
-        ]
-        seen: set[str] = set()
-        for normalized, score in ordered_regression:
-            column = lookup.get(normalized)
-            if not column or column in seen:
-                continue
-            seen.add(column)
-            candidates.append(
-                _target_payload(
-                    column=column,
-                    task_type="regression",
-                    confidence_score=score,
-                    purpose="花朵特徵預測",
-                    reasons=["連續數值欄位", "與其他花朵量測欄位可建立關係", "可做回歸示範但不如 Species 直覺"],
-                )
-            )
-        return candidates[:5]
-
-    def _ai_llm_targets(self, df: pd.DataFrame) -> list[dict[str, Any]]:
-        purpose_map = (
-            ("預測模型能力", "regression", 82, ("score", "score_pct", "benchmark_score")),
-            ("預測訓練成本", "regression", 78, ("training_cost", "training_cost_usd", "gpu_hours", "flops", "energy", "co2")),
-            ("API 價格分析", "regression", 76, ("input_usd", "output_usd", "blended_usd", "price_per_million", "tokens")),
-            ("時間趨勢分析", "time_series", 70, ("release_date", "date", "year_month", "timestamp", "release_year")),
-        )
-        recommendations: list[dict[str, Any]] = []
-        for purpose, task_type, score, hints in purpose_map:
-            for column in df.columns:
-                column_name = str(column)
-                if any(hint in _normalize_name(column_name) for hint in hints):
-                    recommendations.append(
-                        _target_payload(
-                            column=column_name,
-                            task_type=task_type,
-                            confidence_score=score,
-                            purpose=purpose,
-                            reasons=[
-                                "欄位語意符合 AI/LLM 分析目的",
-                                "需先確認 benchmark、價格或時間定義",
-                                "不應被誤用為體育分數或金融價格",
-                            ],
-                        )
-                    )
-        return _dedupe_target_candidates(recommendations)[:5]
-
-    def _domain_targets(self, df: pd.DataFrame, primary_domain_key: str | None) -> list[dict[str, Any]]:
-        domain_hints: dict[str, tuple[str, str, int, tuple[str, ...]]] = {
-            HOUSING_DOMAIN.key: ("房價預測", "regression", 88, ("saleprice", "median_house_value", "price", "房價")),
-            CUSTOMER_DOMAIN.key: ("客戶行為預測", "classification", 84, ("churn", "retention", "segment", "流失", "留存")),
-            FINANCIAL_DOMAIN.key: ("價格或趨勢分析", "time_series", 86, ("close", "adjusted_close", "price")),
-            SALES_DOMAIN.key: ("銷售績效預測", "regression", 84, ("sales", "revenue", "profit", "quantity", "營收", "銷售", "利潤")),
-            SPORTS_DOMAIN.key: ("體育表現分析", "regression", 74, ("points", "assists", "rebounds", "score")),
-        }
-        spec = domain_hints.get(str(primary_domain_key))
-        if not spec:
-            return []
-        purpose, task_type, base_score, hints = spec
-        recommendations: list[dict[str, Any]] = []
+        usable_feature_count = int(diagnostics.get("usable_feature_count") or max(0, df.shape[1] - 1))
         for column in df.columns:
             column_name = str(column)
             normalized = _normalize_name(column_name)
-            if _is_unsafe_target_name(normalized):
-                continue
-            if any(hint in normalized for hint in hints):
-                task = self._infer_task_type(df[column], preferred=task_type)
-                recommendations.append(
-                    _target_payload(
-                        column=column_name,
-                        task_type=task,
-                        confidence_score=base_score,
-                        purpose=purpose,
-                        reasons=["欄位名稱符合資料主題", "資料型態可作為目標", "仍需依使用者問題確認"],
-                    )
-                )
-        return recommendations
-
-    def _generic_targets(self, df: pd.DataFrame) -> list[dict[str, Any]]:
-        candidates: list[dict[str, Any]] = []
-        for column in df.columns:
-            column_name = str(column)
-            normalized = _normalize_name(column_name)
-            if _is_unsafe_target_name(normalized):
-                continue
+            warnings: list[str] = []
+            why_not_higher: list[str] = []
+            reasons: list[str] = []
             series = df[column].dropna()
             if series.empty:
                 continue
-            task_type = self._infer_task_type(series)
-            score = 42
-            reasons = ["欄位型態可用於分析", "需由使用者確認是否符合問題"]
-            if pd.api.types.is_numeric_dtype(series):
-                score += 16
-                reasons.append("連續數值欄位")
-            elif 2 <= series.nunique() <= min(30, max(3, int(len(series) * 0.3))):
+            missing_ratio = 1 - (len(series) / max(1, len(df)))
+            unique_count = int(series.nunique(dropna=True))
+            unique_ratio = unique_count / max(1, int(len(series)))
+
+            score = 35
+            if _is_unsafe_target_name(normalized) or _is_id_like_column_name(column_name, df[column]):
+                score -= 55
+                warnings.append("疑似 ID 或索引欄位，不適合作為目標。")
+            if _looks_like_leakage_or_prediction_column(column_name):
+                score -= 35
+                warnings.append("欄位名稱像答案、提交或預測欄位，需要人工確認。")
+            if any(keyword in normalized for keyword in TARGET_NAME_HINTS):
                 score += 18
-                reasons.append("類別數量合理")
-            if any(keyword in normalized for keyword in ("target", "label", "price", "sales", "revenue", "profit", "amount", "value", "score", "species")):
-                score += 12
-                reasons.append("欄位名稱帶有目標語意")
-            if score >= 58:
+                reasons.append("欄位名稱具有結果或目標語意。")
+            if missing_ratio >= 0.4:
+                score -= 25
+                warnings.append("缺失比例過高。")
+            elif missing_ratio > 0:
+                score -= 5
+                why_not_higher.append("仍存在缺失值。")
+            if unique_count <= 1:
+                score -= 60
+                warnings.append("常數欄位無法作為建模目標。")
+            if unique_ratio >= 0.95 and len(series) >= 20:
+                score -= 35
+                warnings.append("唯一值比例過高，較像識別碼或自由文字。")
+
+            task_type = self._infer_task_type(series)
+            if task_type == "classification":
+                if 2 <= unique_count <= min(30, max(3, int(len(series) * 0.25))):
+                    score += 18
+                    reasons.append("類別數量合理，適合分類任務。")
+                counts = series.astype(str).value_counts()
+                if not counts.empty and int(counts.min()) < 2:
+                    score -= 18
+                    warnings.append("至少一個類別樣本少於 2 筆，無法穩定切分訓練/測試。")
+            elif task_type == "regression":
+                if pd.api.types.is_numeric_dtype(series) and unique_count >= max(8, min(30, int(len(series) * 0.1))):
+                    score += 15
+                    reasons.append("連續數值欄位，具備回歸目標條件。")
+                else:
+                    why_not_higher.append("數值變異不足或唯一值偏少。")
+
+            if usable_feature_count < 2:
+                score -= 30
+                warnings.append("可用特徵少於 2 個，建模支撐不足。")
+
+            score = int(max(0, min(100, score)))
+            if score >= 45:
                 candidates.append(
                     _target_payload(
                         column=column_name,
                         task_type=task_type,
-                        confidence_score=min(82, score),
+                        confidence_score=score,
                         purpose="自訂目標欄位",
-                        reasons=reasons,
+                        reasons=reasons or ["欄位型態可用於分析，但仍需使用者確認問題定義。"],
+                        warnings=warnings,
+                        why_not_higher=why_not_higher,
                     )
                 )
         return sorted(candidates, key=lambda item: (-int(item["confidence_score"]), str(item["column"])))
@@ -576,6 +602,147 @@ class TargetRecommendationEngine:
         if not pd.api.types.is_numeric_dtype(non_null) or (2 <= unique_count <= min(20, max(3, int(len(non_null) * 0.2)))):
             return "classification" if preferred != "regression" else "regression"
         return "regression"
+
+
+class TargetRecommendationEngine(TargetAdvisor):
+    """Backward-compatible alias for existing imports/tests."""
+
+    def recommend(
+        self,
+        df: pd.DataFrame,
+        *,
+        primary_domain_key: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = primary_domain_key
+        return super().recommend(df, diagnostics=diagnostics)
+
+
+class TaskRouter:
+    def route(
+        self,
+        *,
+        df: pd.DataFrame,
+        diagnostics: dict[str, Any],
+        primary_domain: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        numeric_columns = [str(column) for column in diagnostics.get("numeric_columns") or []]
+        categorical_columns = [str(column) for column in diagnostics.get("categorical_columns") or []]
+        datetime_columns = [str(column) for column in diagnostics.get("datetime_columns") or []]
+        target_candidates = [dict(item) for item in diagnostics.get("candidate_target_columns") or []]
+        usable_feature_count = int(diagnostics.get("usable_feature_count") or 0)
+        row_count = int(diagnostics.get("row_count") or len(df))
+        financial_eligible = bool(_financial_eligibility(df=df, primary_domain_key=str(primary_domain.get("key") or ""), date_columns=datetime_columns).get("eligible"))
+        top_classification = next((item for item in target_candidates if item.get("task_type") == "classification" and int(item.get("score") or 0) >= 60), None)
+        top_regression = next((item for item in target_candidates if item.get("task_type") == "regression" and int(item.get("score") or 0) >= 60), None)
+
+        return [
+            _task_payload(
+                task="EDA",
+                can_run=row_count > 0 and len(df.columns) > 0,
+                confidence=95 if row_count > 0 else 0,
+                required_columns=[],
+                missing_requirements=[] if row_count > 0 else ["至少一列資料"],
+                reason="資料探索只需要可讀取的表格資料。",
+                warning="",
+            ),
+            _task_payload(
+                task="classification",
+                can_run=bool(top_classification) and usable_feature_count >= 2 and row_count >= 10,
+                confidence=int(top_classification.get("score") if top_classification else 0),
+                required_columns=[str(top_classification.get("column"))] if top_classification else ["可靠分類目標欄位"],
+                missing_requirements=_task_missing_requirements(
+                    [
+                        (bool(top_classification), "可靠分類目標欄位"),
+                        (usable_feature_count >= 2, "至少 2 個可用特徵"),
+                        (row_count >= 10, "至少 10 筆資料"),
+                    ]
+                ),
+                reason="分類任務需要低到中基數的目標欄位與足夠特徵。",
+                warning="若類別樣本太少，系統會阻止或降低可信度。",
+            ),
+            _task_payload(
+                task="regression",
+                can_run=bool(top_regression) and usable_feature_count >= 2 and row_count >= 10,
+                confidence=int(top_regression.get("score") if top_regression else 0),
+                required_columns=[str(top_regression.get("column"))] if top_regression else ["可靠數值目標欄位"],
+                missing_requirements=_task_missing_requirements(
+                    [
+                        (bool(top_regression), "可靠數值目標欄位"),
+                        (usable_feature_count >= 2, "至少 2 個可用特徵"),
+                        (row_count >= 10, "至少 10 筆資料"),
+                    ]
+                ),
+                reason="回歸任務需要連續數值目標與足夠變異。",
+                warning="若目標像 ID、日期或答案欄位，應先人工確認。",
+            ),
+            _task_payload(
+                task="time_series",
+                can_run=bool(datetime_columns) and bool(numeric_columns) and row_count >= 24,
+                confidence=75 if bool(datetime_columns) and bool(numeric_columns) else 25,
+                required_columns=[*(datetime_columns[:1] or ["日期欄位"]), *(numeric_columns[:1] or ["數值欄位"])],
+                missing_requirements=_task_missing_requirements(
+                    [
+                        (bool(datetime_columns), "日期欄位"),
+                        (bool(numeric_columns), "數值欄位"),
+                        (row_count >= 24, "至少 24 個時間點"),
+                    ]
+                ),
+                reason="時間序列至少需要可排序日期與足夠時間點。",
+                warning="有日期不代表可預測；資料需具備穩定時間粒度。",
+            ),
+            _task_payload(
+                task="financial_analysis",
+                can_run=financial_eligible,
+                confidence=90 if financial_eligible else 0,
+                required_columns=["日期欄位", "close/price/open/high/low/adjusted_close"],
+                missing_requirements=[] if financial_eligible else ["金融日期欄位與價格欄位"],
+                reason="金融分析只在同時具備日期與金融價格欄位時啟用。",
+                warning="" if financial_eligible else "不可對非金融資料產生 RSI、MACD、VaR。",
+            ),
+            _task_payload(
+                task="clustering",
+                can_run=len(numeric_columns) >= 2 and row_count >= 10,
+                confidence=70 if len(numeric_columns) >= 2 and row_count >= 10 else 20,
+                required_columns=numeric_columns[:4] or ["至少 2 個數值欄位"],
+                missing_requirements=_task_missing_requirements(
+                    [
+                        (len(numeric_columns) >= 2, "至少 2 個數值欄位"),
+                        (row_count >= 10, "至少 10 筆資料"),
+                    ]
+                ),
+                reason="分群不需要目標欄位，但需要足夠數值特徵。",
+                warning="分群結果是探索，不等於真實族群或因果結論。",
+            ),
+            _task_payload(
+                task="anomaly_detection",
+                can_run=len(numeric_columns) >= 1 and row_count >= 20,
+                confidence=65 if len(numeric_columns) >= 1 and row_count >= 20 else 20,
+                required_columns=numeric_columns[:4] or ["至少 1 個數值欄位"],
+                missing_requirements=_task_missing_requirements(
+                    [
+                        (len(numeric_columns) >= 1, "至少 1 個數值欄位"),
+                        (row_count >= 20, "至少 20 筆資料"),
+                    ]
+                ),
+                reason="異常偵測可用於探索極端值，但不能直接判定資料錯誤。",
+                warning="低樣本異常偵測容易誤判。",
+            ),
+        ]
+
+
+class AnalysisIntegrityValidator:
+    def validate_columns_exist(
+        self,
+        *,
+        schema_columns: list[str],
+        referenced_columns: list[str],
+        context: str,
+    ) -> None:
+        schema = set(schema_columns)
+        missing = sorted({column for column in referenced_columns if column and column not in schema})
+        if missing:
+            raise ValueError(f"{context} 引用了不存在於目前 schema 的欄位：{', '.join(missing)}")
 
 
 class DatasetStoryGenerator:
@@ -594,18 +761,10 @@ class DatasetStoryGenerator:
         top_target = str(target_recommendations[0].get("column")) if target_recommendations else ""
         row_count = int(len(df))
         column_count = int(df.shape[1])
-        if key == IRIS_DOMAIN.key:
-            return {
-                "one_sentence": f"這份資料記錄 {row_count:,} 筆鳶尾花樣本，最適合先用「{top_target or 'Species'}」預測花朵品種。",
-                "what_is_this": "這是經典鳶尾花分類資料集，包含花萼與花瓣的長寬量測，以及每筆樣本的花朵品種。",
-                "contains": ["花萼長度", "花萼寬度", "花瓣長度", "花瓣寬度", "花朵品種"],
-                "can_answer": ["哪些特徵最能區分花朵品種？", "是否能根據花萼與花瓣量測預測 Species？", "花瓣長寬與品種之間有多強的關係？"],
-                "cannot_answer": ["金融分析", "時間序列預測", "股票技術分析", "真實野外族群的因果推論"],
-            }
         if key == AI_LLM_DOMAIN.key:
             return {
-                "one_sentence": "這份資料較像 AI/LLM 模型評估資料，可用來理解模型能力、成本、價格與發布趨勢。",
-                "what_is_this": "資料包含模型、benchmark、參數量、公司、發布日期、訓練成本或 API 價格等語意欄位。",
+                "one_sentence": "這份資料具備 AI/LLM 模型評估語意欄位；這是資料類型推薦，不是不可變結論。",
+                "what_is_this": "目前資料中可驗證欄位包含模型、benchmark、參數量、公司、發布日期、成本或 API 價格等線索。",
                 "contains": _story_column_groups(numeric_columns, categorical_columns, date_columns),
                 "can_answer": ["哪些模型或公司在 benchmark 表現較好？", "模型能力是否隨參數量或訓練成本增加？", "API 價格是否隨時間下降？"],
                 "cannot_answer": ["體育表現分析", "RSI/MACD/VaR 金融技術分析", "未定義目標欄位時的可靠 AutoML 結論"],
@@ -619,18 +778,18 @@ class DatasetStoryGenerator:
                 "cannot_answer": ["沒有外部事件與基本面資料時，不能作為投資建議。"],
             }
         labels = {
-            HOUSING_DOMAIN.key: ("房價預測資料", ["哪些因素與房價最相關？", "是否能預測價格區間？"], ["不能直接證明地區或坪數造成價格變化。"]),
-            CUSTOMER_DOMAIN.key: ("客戶行為資料", ["哪些客戶特徵與流失、消費或分群相關？", "哪些客群需要優先追蹤？"], ["不能在沒有同意與合規審查下做敏感個資決策。"]),
-            SALES_DOMAIN.key: ("銷售績效資料", ["哪些產品、地區或期間帶動營收？", "是否能預測銷售或利潤？"], ["不能單靠內部表格推論市場總需求。"]),
-            SPORTS_DOMAIN.key: ("體育表現資料", ["哪些球員或球隊指標與表現相關？", "是否能建立排名或分群？"], ["不能把 score 以外的任意數值當成勝負原因。"]),
+            HOUSING_DOMAIN.key: ("房價預測資料", ["哪些數值或類別欄位與價格目標一起變動？", "是否具備足夠欄位支撐價格預測？"], ["只有 price 不足以證明這是房價資料。"]),
+            CUSTOMER_DOMAIN.key: ("客戶行為資料", ["哪些客戶欄位與分群、流失或消費目標相關？", "是否可做分類、分群或留存探索？"], ["不能在沒有同意與合規審查下做敏感個資決策。"]),
+            SALES_DOMAIN.key: ("銷售績效資料", ["哪些產品、地區或期間欄位與銷售/營收一起變動？", "是否能預測銷售或利潤？"], ["不能單靠內部表格推論市場總需求。"]),
+            SPORTS_DOMAIN.key: ("體育表現資料", ["哪些球員或球隊欄位與表現指標相關？", "是否能建立排名或分群？"], ["不能只因為有 score 就判斷為體育資料。"]),
         }
         subject, can_answer, cannot_answer = labels.get(
             key,
             ("待確認資料", ["資料有哪些欄位與缺失值？", "哪些欄位可能適合作為分析目標？"], ["尚未確認業務語意前，不適合直接做決策。"]),
         )
         return {
-            "one_sentence": f"這份資料看起來像{subject}，共有 {row_count:,} 筆與 {column_count:,} 欄；建議先確認分析目標。",
-            "what_is_this": f"系統根據檔名「{file_name}」與欄位語意判斷，這份資料目前最接近{subject}。",
+            "one_sentence": f"這份資料目前推薦類型為「{primary_domain.get('label', subject)}」，共有 {row_count:,} 筆與 {column_count:,} 欄；若證據不足需人工確認。",
+            "what_is_this": f"系統只根據目前資料欄位與型態判斷；檔名「{file_name}」僅作低權重輔助訊號。",
             "contains": _story_column_groups(numeric_columns, categorical_columns, date_columns),
             "can_answer": can_answer,
             "cannot_answer": cannot_answer,
@@ -680,6 +839,8 @@ def _target_payload(
     confidence_score: int,
     purpose: str,
     reasons: list[str],
+    warnings: list[str] | None = None,
+    why_not_higher: list[str] | None = None,
 ) -> dict[str, Any]:
     task_label_map = {
         "classification": "分類",
@@ -695,9 +856,12 @@ def _target_payload(
         "task_type": task_type,
         "task_type_label": task_label_map.get(task_type, task_type),
         "confidence_score": score,
+        "score": score,
         "confidence": "high" if score >= 80 else "medium" if score >= 65 else "low",
         "reasons": reasons,
         "reason": "；".join(reasons),
+        "warnings": warnings or [],
+        "why_not_higher": why_not_higher or [],
     }
 
 
@@ -711,6 +875,112 @@ def _dedupe_target_candidates(candidates: list[dict[str, Any]]) -> list[dict[str
         if existing is None or int(item.get("confidence_score") or 0) > int(existing.get("confidence_score") or 0):
             by_column[column] = item
     return sorted(by_column.values(), key=lambda item: (-int(item.get("confidence_score") or 0), str(item.get("column"))))
+
+
+def _task_payload(
+    *,
+    task: str,
+    can_run: bool,
+    confidence: int,
+    required_columns: list[str],
+    missing_requirements: list[str],
+    reason: str,
+    warning: str,
+) -> dict[str, Any]:
+    return {
+        "task": task,
+        "can_run": bool(can_run),
+        "confidence": int(max(0, min(100, confidence))),
+        "required_columns": required_columns,
+        "missing_requirements": missing_requirements,
+        "reason": reason,
+        "warning": warning,
+    }
+
+
+def _task_missing_requirements(checks: list[tuple[bool, str]]) -> list[str]:
+    return [label for passed, label in checks if not passed]
+
+
+def _analysis_context_payload(*, df: pd.DataFrame, file_name: str, columns: list[str]) -> dict[str, Any]:
+    schema_parts = [
+        {"name": str(column), "dtype": str(df[column].dtype)}
+        for column in df.columns
+    ]
+    schema_json = json.dumps(schema_parts, ensure_ascii=False, sort_keys=True)
+    column_signature = "|".join(f"{item['name']}:{item['dtype']}" for item in schema_parts)
+    schema_fingerprint = hashlib.sha256(schema_json.encode("utf-8")).hexdigest()
+    file_payload = json.dumps(
+        {
+            "file_name": file_name,
+            "row_count": int(len(df)),
+            "column_signature": column_signature,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    file_fingerprint = hashlib.sha256(file_payload.encode("utf-8")).hexdigest()
+    dataset_id = hashlib.sha256(f"{file_fingerprint}:{schema_fingerprint}".encode("utf-8")).hexdigest()[:24]
+    run_id = hashlib.sha256(f"{dataset_id}:{len(df)}:{len(columns)}".encode("utf-8")).hexdigest()[:24]
+    return {
+        "dataset_id": dataset_id,
+        "run_id": run_id,
+        "schema_fingerprint": schema_fingerprint,
+        "file_fingerprint": file_fingerprint,
+        "column_signature": column_signature,
+        "column_count": len(columns),
+        "row_count": int(len(df)),
+    }
+
+
+def _is_id_like_column_name(column_name: str, series: pd.Series) -> bool:
+    normalized = _normalize_name(column_name)
+    non_null = series.dropna()
+    unique_ratio = float(non_null.nunique(dropna=True) / max(1, len(non_null))) if len(non_null) else 0
+    return (
+        normalized in {"id", "uuid", "guid", "index", "row_id", "source_row_number"}
+        or normalized.endswith("_id")
+        or normalized.endswith("_uuid")
+        or normalized.endswith("_guid")
+        or (unique_ratio >= 0.98 and any(hint in normalized for hint in ID_NAME_HINTS))
+    )
+
+
+def _looks_like_leakage_or_prediction_column(column_name: str) -> bool:
+    normalized = _normalize_name(column_name)
+    return any(hint in normalized for hint in SUBMISSION_NAME_HINTS) or normalized in {
+        "pred",
+        "prediction",
+        "predicted",
+        "answer",
+        "output",
+    }
+
+
+def _detect_outlier_columns(df: pd.DataFrame) -> list[dict[str, Any]]:
+    outliers: list[dict[str, Any]] = []
+    numeric = df.select_dtypes(include="number")
+    for column in numeric.columns:
+        values = pd.to_numeric(numeric[column], errors="coerce").dropna()
+        if len(values) < 12:
+            continue
+        q1 = values.quantile(0.25)
+        q3 = values.quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0:
+            continue
+        mask = (values < q1 - 1.5 * iqr) | (values > q3 + 1.5 * iqr)
+        count = int(mask.sum())
+        if count:
+            outliers.append(
+                {
+                    "column": str(column),
+                    "count": count,
+                    "ratio": round(float(count / max(1, len(values))), 6),
+                    "method": "IQR 1.5x",
+                }
+            )
+    return outliers
 
 
 def _story_column_groups(
@@ -751,30 +1021,28 @@ def plan_multi_table_strategy(datasets: list[tuple[str, pd.DataFrame]]) -> dict[
     common_ratio = len(common_columns) / max(1, len(union_columns))
     join_key_candidates = _multi_table_join_candidates(datasets)
     table_roles = [_infer_table_role(name, df) for name, df in datasets]
+    role_keys = {role["role_key"] for role in table_roles}
 
-    if dominant_domain == AI_LLM_DOMAIN.key and dominant_count >= max(2, len(datasets) // 2):
-        strategy = "multi_table_relationship"
-        label = "多表關聯分析"
-        reason = (
-            "這批檔案共同描述 AI/LLM 模型、benchmark、算力成本、API 價格與里程碑；"
-            "每張表主題不同，不建議直接垂直合併。"
-        )
-        warnings = [
-            "不建議直接垂直合併，否則會製造大量缺失值，並讓 source_row_number、score 等欄位被誤用。",
-            "建議先用 model_name / model_id / organization / release_date / date 作為關聯線索。",
-        ]
+    if {"training_dataset", "unlabeled_prediction_dataset"}.issubset(role_keys) or "submission_format" in role_keys:
+        strategy = "train_predict_workflow"
+        label = "訓練 / 預測工作流"
+        reason = "多檔案結構像 train/test/submission 流程；不可把未標籤 test 或 submission format 當訓練資料合併。"
+        warnings = ["需要使用者確認目標欄位與哪個檔案是訓練資料後，才可執行模型。"]
     elif _is_union_candidate(column_sets, understandings):
         strategy = "union"
         label = "垂直合併"
         reason = "欄位結構高度相似，較像同一種資料的不同批次或不同時間片段。"
         warnings = []
     elif join_key_candidates:
-        strategy = "join"
-        label = "依鍵值 Join"
-        reason = "檔案之間存在可疑共同鍵，適合先確認鍵值定義後再橫向合併。"
-        warnings = ["Join 前需確認鍵值唯一性，避免多對多合併放大資料列。"]
+        strategy = "relational_analysis"
+        label = "多表關聯分析"
+        reason = "檔案之間存在共同鍵候選，適合先確認鍵值定義後做關聯分析。"
+        warnings = [
+            "不建議直接垂直合併；需先確認共同鍵與每張表代表的資料角色。",
+            "Join 前需確認鍵值唯一性，避免多對多合併放大資料列。低信心時不會自動合併。",
+        ]
     else:
-        strategy = "separate_analysis"
+        strategy = "keep_separate"
         label = "保持分表分析"
         reason = "欄位與主題差異較大，目前不建議自動合併。"
         warnings = ["若要合併，請先手動指定共同鍵或確認每張表代表同一種資料。"]
@@ -782,7 +1050,7 @@ def plan_multi_table_strategy(datasets: list[tuple[str, pd.DataFrame]]) -> dict[
     return {
         "recommended_strategy": strategy,
         "label": label,
-        "confidence_score": 88 if dominant_domain == AI_LLM_DOMAIN.key else 72,
+        "confidence_score": 88 if strategy == "union" else 72 if strategy in {"relational_analysis", "train_predict_workflow"} else 55,
         "reason": reason,
         "dominant_domain": next(
             (item["primary_domain"] for item in understandings if item["primary_domain"]["key"] == dominant_domain),
@@ -820,9 +1088,9 @@ def _score_domains(columns: list[str], *, file_name: str) -> list[dict[str, Any]
                 score += 2 + min(3, len(matched_clues))
             if any(strong in normalized for strong in definition.strong_clues):
                 score += 5
-        if any(clue in file_hint for clue in definition.clues):
-            score += 2
-        if score > 0:
+        if any(clue in file_hint for clue in definition.clues) and score >= 4:
+            score += 1
+        if score > 0 and len(set(evidence)) >= 2:
             confidence = min(97, 35 + score * 5)
             scored.append(_topic_payload(definition, confidence, evidence[:8]))
 
@@ -855,11 +1123,22 @@ def _dedupe_topics(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _topic_payload(definition: DomainDefinition, confidence_score: int, evidence: list[str]) -> dict[str, Any]:
+    counter_evidence: list[str] = []
+    if definition.key == FINANCIAL_DOMAIN.key and not any(_normalize_name(column) in FINANCIAL_PRICE_NAMES for column in evidence):
+        counter_evidence.append("尚未同時確認日期欄位與標準金融價格欄位。")
+    if len(evidence) < 3 and definition.key != GENERIC_DOMAIN.key:
+        counter_evidence.append("可用證據欄位偏少，資料類型仍需人工確認。")
+    uncertainty_reason = "證據不足，需使用者確認資料語意。" if confidence_score < 70 or counter_evidence else ""
     return {
         "key": definition.key,
         "label": definition.label,
+        "predicted_dataset_type": definition.label,
         "confidence_score": int(confidence_score),
+        "confidence": int(confidence_score),
         "evidence_columns": evidence,
+        "evidence": evidence,
+        "counter_evidence": counter_evidence,
+        "uncertainty_reason": uncertainty_reason,
     }
 
 
@@ -999,13 +1278,6 @@ def _not_suitable_reasons(
 
 
 def _recommended_analysis_goals(primary_domain_key: str) -> list[dict[str, str]]:
-    if primary_domain_key == IRIS_DOMAIN.key:
-        return [
-            {"key": "species_classification", "label": "花朵品種分類"},
-            {"key": "feature_importance", "label": "花萼與花瓣特徵重要性"},
-            {"key": "measurement_relationship", "label": "花瓣與花萼量測關係"},
-            {"key": "model_comparison", "label": "分類模型比較"},
-        ]
     if primary_domain_key == AI_LLM_DOMAIN.key:
         return [
             {"key": "ai_model_overview", "label": "模型基本概況"},
@@ -1101,19 +1373,37 @@ def _infer_table_role(file_name: str, df: pd.DataFrame) -> dict[str, str]:
     normalized_file = _normalize_name(file_name)
     normalized_columns = " ".join(_normalize_name(str(column)) for column in df.columns)
     text = f"{normalized_file} {normalized_columns}"
-    if "benchmark" in text:
-        role = "Benchmark 成績表"
-    elif "pricing" in text or "input_usd" in text or "output_usd" in text:
-        role = "API 價格歷史表"
-    elif "compute" in text or "flops" in text or "gpu_hours" in text or "training_cost" in text:
-        role = "訓練成本與算力估計表"
-    elif "milestone" in text or "capability" in text:
-        role = "能力里程碑表"
-    elif "catalog" in text or "params_billions" in text or "context_window" in text:
-        role = "模型基本資料表"
+    target_candidates = TargetAdvisor().recommend(df)
+    id_like = [column for column in df.columns if _is_id_like_column_name(str(column), df[column])]
+    if "submission" in normalized_file or (
+        len(df.columns) <= 3
+        and bool(id_like)
+        and any(_looks_like_leakage_or_prediction_column(str(column)) for column in df.columns)
+    ):
+        role_key = "submission_format"
+        role = "提交格式表"
+    elif any(token in normalized_file for token in ("test", "predict", "unlabeled")) and not target_candidates:
+        role_key = "unlabeled_prediction_dataset"
+        role = "未標籤預測資料"
+    elif any(token in normalized_file for token in ("train", "training")) and target_candidates:
+        role_key = "training_dataset"
+        role = "訓練資料"
+    elif len(df.columns) <= 4 and bool(id_like):
+        role_key = "lookup_table"
+        role = "對照表或查找表"
+    elif any(token in text for token in ("transaction", "order", "invoice", "event", "交易", "訂單")):
+        role_key = "transaction_table"
+        role = "交易或事件表"
+    elif bool(id_like) and df.shape[1] >= 4:
+        role_key = "dimension_table"
+        role = "維度或主檔資料表"
+    elif target_candidates:
+        role_key = "standalone_dataset"
+        role = "可獨立分析資料"
     else:
+        role_key = "unknown"
         role = "待確認資料表"
-    return {"file_name": file_name, "role": role}
+    return {"file_name": file_name, "role": role, "role_key": role_key}
 
 
 def _available_merge_strategies(common_ratio: float, join_key_candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1131,15 +1421,21 @@ def _available_merge_strategies(common_ratio: float, join_key_candidates: list[d
             "enabled": bool(join_key_candidates),
         },
         {
-            "key": "multi_table_relationship",
+            "key": "relational_analysis",
             "label": "多表關聯分析",
             "description": "適合主題不同但共享模型、公司或日期等實體的資料。",
             "enabled": True,
         },
         {
-            "key": "separate_analysis",
+            "key": "keep_separate",
             "label": "保持分表分析",
             "description": "適合關聯不明或需要先分別理解每張表的資料。",
+            "enabled": True,
+        },
+        {
+            "key": "ask_user_to_confirm",
+            "label": "要求使用者確認",
+            "description": "低信心或角色不明時，不自動合併或建模。",
             "enabled": True,
         },
     ]

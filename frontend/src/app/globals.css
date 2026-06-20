@@ -8380,7 +8380,7 @@ details[open] > summary .disclosure-chevron {
 .storage-placeholder,
 .storage-message,
 .understanding-summary-card p {
-  color: rgb(var(--color-muted));
+  color: rgb(var(--color-muted-foreground));
   font-size: 14px;
   line-height: 1.7;
 }
@@ -8412,7 +8412,7 @@ details[open] > summary .disclosure-chevron {
 }
 
 .strategy-key-card small {
-  color: rgb(var(--color-muted));
+  color: rgb(var(--color-muted-foreground));
   font-size: 12px;
   line-height: 1.5;
 }
@@ -8441,7 +8441,7 @@ details[open] > summary .disclosure-chevron {
 }
 
 .storage-metric-grid dt {
-  color: rgb(var(--color-muted));
+  color: rgb(var(--color-muted-foreground));
   font-size: 12px;
   font-weight: 800;
 }
@@ -8517,7 +8517,7 @@ details[open] > summary .disclosure-chevron {
 }
 
 .confidence-breakdown dt {
-  color: rgb(var(--color-muted));
+  color: rgb(var(--color-muted-foreground));
   font-size: 12px;
   font-weight: 820;
 }
@@ -8526,7 +8526,7 @@ details[open] > summary .disclosure-chevron {
   display: grid;
   gap: .15rem;
   margin: 0;
-  color: rgb(var(--color-muted));
+  color: rgb(var(--color-muted-foreground));
   font-size: 12px;
   line-height: 1.45;
 }
@@ -8581,7 +8581,7 @@ details[open] > summary .disclosure-chevron {
 }
 
 .compact-explain-list small {
-  color: rgb(var(--color-muted));
+  color: rgb(var(--color-muted-foreground));
   font-size: 12px;
   line-height: 1.55;
 }

@@ -48,6 +48,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from app.services.artifact_access import create_artifact_url
 from app.services.dataset_analyzer import analyze_dataframe, merge_dataframes, read_uploaded_dataframe
+from app.services.data_understanding import DataDiagnostics
 from app.services.feature_name_resolver import FeatureNameResolver
 from app.services.insight_narrative import build_model_brief, enrich_model_option
 from app.services.analysis_progress import (
@@ -352,6 +353,12 @@ def run_model_analysis(
     full_target = source_working_df[target_column]
     inferred_problem_type = _infer_problem_type(full_target)
     problem_type = inferred_problem_type if requested_mode == "auto" else requested_mode
+    _validate_modeling_feasibility(
+        source_working_df,
+        target_column=target_column,
+        problem_type=problem_type,
+        stage="訓練前檢查",
+    )
 
     if requested_mode == "auto":
         notes.append(f"系統自動判斷此資料適合使用「{_problem_type_label(problem_type)}」分析。")
@@ -375,6 +382,11 @@ def run_model_analysis(
 
     if x_raw.empty:
         raise HTTPException(status_code=400, detail="除了目標欄位外沒有可用特徵。")
+    if x_raw.shape[1] < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="可用特徵少於 2 個，系統已阻止建模。請補充特徵、移除 ID/洩漏欄位後再分析。",
+        )
 
     y, target_notes = _prepare_target(y_raw, problem_type)
     notes.extend(target_notes)
@@ -778,7 +790,7 @@ def _model_catalog() -> list[ModelSpec]:
             label="隨機森林",
             problem_type="regression",
             family="ensemble",
-            description="穩健的非線性模型，適合混合欄位與一般表格資料。",
+            description="穩健的非線性模型，適合已確認目標欄位且包含混合特徵的表格資料。",
             complexity="medium",
             estimator_factory=lambda: RandomForestRegressor(
                 n_estimators=80,
@@ -1400,6 +1412,54 @@ def _sample_modeling_dataframe(
         stratify=stratify_target,
     )
     return sampled_df.sort_index()
+
+
+def _validate_modeling_feasibility(
+    df: pd.DataFrame,
+    *,
+    target_column: str,
+    problem_type: str,
+    stage: str,
+) -> None:
+    diagnostics = DataDiagnostics().analyze(df)
+    if target_column not in df.columns:
+        raise HTTPException(status_code=400, detail=f"{stage}失敗：目標欄位不存在。")
+
+    target_series = df[target_column].dropna()
+    normalized = target_column.strip().lower().replace("-", "_").replace(" ", "_")
+    if target_series.empty:
+        raise HTTPException(status_code=400, detail=f"{stage}失敗：目標欄位全部為缺失值。")
+    if normalized in ALWAYS_EXCLUDED_FEATURE_NAMES or _is_id_like_column(target_column):
+        raise HTTPException(status_code=400, detail=f"{stage}失敗：目標欄位像 ID、索引或系統欄位，不適合建模。")
+    if target_column in diagnostics.get("datetime_columns", []):
+        raise HTTPException(status_code=400, detail=f"{stage}失敗：日期欄位不適合作為一般模型目標。")
+    unique_count = int(target_series.nunique(dropna=True))
+    unique_ratio = unique_count / max(1, len(target_series))
+    if unique_ratio >= 0.98 and len(target_series) >= 20:
+        raise HTTPException(status_code=400, detail=f"{stage}失敗：目標欄位唯一值比例過高，較像 ID 或自由文字。")
+
+    blocked_features = set(diagnostics.get("id_like_columns") or []) | set(diagnostics.get("constant_columns") or [])
+    usable_feature_candidates = [
+        column for column in df.columns
+        if str(column) != target_column
+        and str(column) not in blocked_features
+        and not _looks_like_text_description(str(column), df[column])
+    ]
+    if len(usable_feature_candidates) < 2:
+        raise HTTPException(status_code=400, detail=f"{stage}失敗：可用特徵少於 2 個，無法建立可信模型。")
+
+    if problem_type == "classification":
+        class_counts = target_series.astype(str).value_counts()
+        if len(class_counts) < 2:
+            raise HTTPException(status_code=400, detail=f"{stage}失敗：分類目標至少需要 2 個類別。")
+        if int(class_counts.min()) < 2:
+            raise HTTPException(status_code=400, detail=f"{stage}失敗：至少一個類別樣本少於 2 筆，無法安全切分訓練/測試。")
+    else:
+        numeric_target = pd.to_numeric(target_series, errors="coerce").dropna()
+        if len(numeric_target) < len(target_series) * 0.8:
+            raise HTTPException(status_code=400, detail=f"{stage}失敗：回歸目標無法穩定轉換為數值。")
+        if int(numeric_target.nunique(dropna=True)) < 5:
+            raise HTTPException(status_code=400, detail=f"{stage}失敗：回歸目標變異不足。")
 
 
 def _is_id_like_column(column_name: str) -> bool:

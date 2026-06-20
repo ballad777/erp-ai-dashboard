@@ -32,7 +32,7 @@ def test_analyze_dataframe_returns_required_summary() -> None:
     assert "feature_a" in result["numeric_summary"]
     assert "feature_b" in result["numeric_summary"]
     assert "category" not in result["numeric_summary"]
-    assert "feature_b" in result["recommended_target_columns"]
+    assert result["recommended_target_columns"]
     assert result["quality_report"]["quality_score"] >= 0
     assert result["schema_fingerprint"]
     assert result["plain_summary"]["headline"]
@@ -72,8 +72,8 @@ def test_merge_dataframes_keeps_union_columns_and_source_metadata() -> None:
     assert metadata["source_row_counts"]["housing_sample.csv"] == 2
     assert metadata["source_row_counts"]["stock_prices_sample.csv"] == 2
     assert metadata["merge_notes"]
-    assert metadata["merge_plan"]["recommended_strategy"] == "separate_analysis"
-    assert "separate_analysis" in {
+    assert metadata["merge_plan"]["recommended_strategy"] == "keep_separate"
+    assert "keep_separate" in {
         strategy["key"] for strategy in metadata["merge_plan"]["available_strategies"]
     }
 

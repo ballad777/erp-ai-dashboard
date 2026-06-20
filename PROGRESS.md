@@ -3672,7 +3672,7 @@ npm run build
 - 新增資料理解模組：
   - 每個檔案先單獨分析，不再預設合併。
   - 回傳主鍵候選、日期欄位、數值欄位、類別欄位、文字欄位、缺失比例、重複比例、可能資料主題、可信度、不適合直接分析原因。
-  - 支援 AI / LLM、金融時間序列、體育與一般表格資料判斷。
+  - 支援 AI / LLM、金融時間序列、體育與待確認資料集判斷。
 - 修正 AI/LLM 資料誤判：
   - `benchmark_scores.csv`、`capability_milestones.csv`、`compute_estimates.csv`、`models_catalog.csv`、`pricing_history.csv` 會判斷為 AI / LLM 模型發展資料。
   - `score` 不再被當成體育資料的唯一線索。
@@ -3804,12 +3804,13 @@ npm run build
 ### 新增功能
 
 - 建立 `DataUnderstandingEngine`：
-  - 可辨識鳶尾花分類資料集、房價預測資料集、客戶行為分析資料集、金融時間序列資料集、AI/LLM 模型評估資料集、銷售績效資料集。
-  - 不再把未判斷資料直接稱為「一般表格資料」，改以「待確認資料集」保守呈現。
+  - 改為以目前上傳資料的欄位、型態、唯一值、缺失值、日期欄位與語意線索做通用診斷。
+  - 判斷結果必須附上 evidence、confidence、limitations；證據不足時改以「待確認資料集」保守呈現。
+  - 禁止為單一範例資料硬寫資料集名稱或固定欄位組合。
 - 建立 `TargetRecommendationEngine`：
   - 回傳 Top 5 目標欄位候選。
-  - 每個候選包含欄位、任務類型、推薦原因與可信度分數。
-  - Iris 資料第一推薦為 `Species`，其次為 `PetalLengthCm`、`PetalWidthCm`、`SepalLengthCm`、`SepalWidthCm`。
+  - 每個候選包含欄位、任務類型、推薦原因、警告、為什麼分數沒有更高與可信度分數。
+  - 若沒有可靠目標欄位，建議先做資料探索或人工確認，不自動替使用者決定。
 - 新增可信度拆解：
   - 資料完整度
   - 缺失值品質
@@ -3855,15 +3856,14 @@ npm run test:run
 npm run build
 ```
 
-Iris 驗收：
+通用資料理解驗收：
 
-1. 上傳 `Iris.csv`。
-2. 確認資料類型為「鳶尾花分類資料集」。
-3. 確認第一推薦目標欄位為 `Species`。
-4. 確認 Top 5 目標欄位顯示任務類型、原因與可信度。
-5. 確認可信度可展開計算依據。
-6. 執行模型後確認圖表故事與模型敘事不是通用模板。
-7. 確認特徵重要性不顯示 `欄位 1`、`欄位 5`、`feature_5` 或 `column_5`。
+1. 上傳未知資料集時，不應直接猜測資料業務意義。
+2. 低證據資料應顯示「待確認資料集」與不確定原因。
+3. Top 5 目標欄位需顯示任務類型、原因、限制與可信度。
+4. 建模前需檢查目標欄位、ID 欄位、日期欄位、洩漏欄位、樣本量與可用特徵數。
+5. 執行模型後確認圖表故事與模型敘事來自本次資料與本次模型結果。
+6. 確認特徵重要性不顯示 `欄位 1`、`欄位 5`、`feature_5` 或 `column_5`。
 
 ### 本次驗證結果
 
@@ -3871,21 +3871,105 @@ Iris 驗收：
 - `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q`：61 passed。
 - `cd frontend && npm run test:run`：69 passed。
 - `cd frontend && npm run build`：通過。
-- Iris 實際流程 smoke test：
-  - `dataset_type = 鳶尾花分類資料集`
-  - `top_targets = ['Species', 'PetalLengthCm', 'PetalWidthCm', 'SepalLengthCm', 'SepalWidthCm']`
-  - `confidence = 100`，組成為 `+30 +25 +20 +10 +0 +15`
-  - 模型敘事開頭為「系統把這次任務判定為鳶尾花品種分類...」
+- 通用資料理解 smoke test：
+  - 未知教學分類資料被保守標示為「待確認資料集」。
+  - `class_label` 可作為分類候選，但結果仍需使用者確認問題定義。
+  - ID-only + target 資料會在建模前被阻止，不會產生無意義模型分數。
+  - train/test/submission 結構會被建議為 train-predict workflow，不會垂直合併。
   - 圖表故事與模型比較皆由本次真實模型分析產生。
 
 ### Known Issues
 
 - 可信度分數目前是透明規則分數，不是機率模型；分數高代表資料輪廓乾淨且語意一致，不代表模型一定可上線。
-- Iris smoke test 使用本地建立的 Iris 結構資料；若使用不同欄位命名，系統仍會依欄位語意重新判斷。
+- Smoke test 使用多組通用 fixture，不依賴單一公開範例資料集或固定欄位組合。
 - 目前尚未新增 Playwright 瀏覽器自動截圖測試；已用後端測試、前端測試與 production build 驗證。
 
 ### 下一階段要做什麼
 
-- 為房價、客戶、銷售、金融與 AI/LLM 樣本各補一組資料理解 fixture。
+- 為更多不同結構資料補通用 fixture，確保判斷依據可追溯且不依賴硬寫資料集名稱。
 - 將特徵重要性資料另存為 CSV，讓前端可直接顯示前 10 名欄位與理由。
 - 報告中心可再加入「只看決策摘要 / 顯示完整研究附錄」切換。
+
+## 2026-06-20：通用資料理解與分析完整性修正
+
+### 已完成檔案
+
+- `backend/app/services/data_understanding.py`
+- `backend/app/services/dataset_analyzer.py`
+- `backend/app/services/model_runner.py`
+- `backend/app/services/insight_narrative.py`
+- `backend/tests/test_generic_analysis_integrity.py`
+- `backend/tests/test_ai_llm_understanding.py`
+- `backend/tests/test_dataset_analyzer.py`
+- `backend/tests/test_storage_and_model_safety.py`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/__tests__/AgentReportPanel.test.tsx`
+- `README.md`
+- `PROGRESS.md`
+
+### 新增功能
+
+- 建立通用 `DataDiagnostics`：
+  - 針對每次上傳重新計算 row、column、schema fingerprint、欄位型態、缺失值、重複值、唯一值比例、ID-like 欄位、高基數欄位、日期欄位、候選目標、可能洩漏欄位、異常欄位與可用特徵數。
+- 建立通用 `TargetAdvisor`：
+  - 每個候選目標都附任務類型、分數、理由、警告與分數未更高的原因。
+  - 不再把 `score`、`price`、`date` 這類單一欄位直接當成資料主題或建模目的。
+- 建立 `TaskRouter`：
+  - 每種任務都回傳 can_run、confidence、required_columns、missing_requirements、reason 與 warning。
+  - 金融分析只有在同時具備日期與金融價格欄位時才可執行。
+- 建立 `AnalysisIntegrityValidator`：
+  - 輸出引用欄位前會檢查欄位是否存在於當前 schema。
+- 重構多檔策略：
+  - 不預設垂直合併。
+  - 支援 keep_separate、union、relational_analysis、train_predict_workflow、ask_user_to_confirm。
+  - train/test/submission 會被視為工作流，不會把未標籤資料當訓練資料合併。
+- 建模前防呆：
+  - 目標欄位不存在、像 ID/日期/高唯一值、可用特徵少於 2、分類類別不足、回歸變異不足時會阻止建模。
+  - source_row_number、ID、答案/預測欄位不會被拿去訓練。
+- 修正文字低對比：
+  - 將理解卡片、策略說明、儲存空間與解釋小字改用 `--color-muted-foreground`，避免透明字。
+
+### 如何啟動
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8002
+
+cd ../frontend
+INTERNAL_API_BASE_URL=http://127.0.0.1:8002 npm run dev -- --hostname 127.0.0.1 --port 3010
+```
+
+### 如何測試
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q
+
+cd frontend
+npm run test:run
+npm run build
+```
+
+### 本次驗證結果
+
+- `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests -q`：68 passed。
+- `cd frontend && npm run test:run`：69 passed。
+- `cd frontend && npm run build`：通過。
+- Production HTTP smoke：
+  - `/` 回傳 63,223 bytes。
+  - `/app` 回傳 51,335 bytes。
+- Storage 檢查：
+  - `generated_outputs`：359 MB。
+  - `generated_outputs/models`：4 KB。
+  - `find generated_outputs/models -type f -size +200M -print`：無輸出。
+
+### Known Issues
+
+- 本次未修改既有 UI 設計，只修正文案對比，符合「禁止修改既有 UI 設計」要求。
+- Playwright Python 與 Node runtime 未安裝於目前專案環境，因此本次未做瀏覽器截圖驗證；已用 production build 與 HTTP smoke 確認主要路由可開。
+- 資料主題判斷是 evidence-based rule engine，不是語意 LLM；低證據時會保守顯示「待確認資料集」。
+
+### 下一階段要做什麼
+
+- 補足更多真實資料集 fixture，持續驗證通用診斷，不新增單一資料集硬寫規則。
+- 將所有報告 claim 統一格式化為 Evidence / Confidence / Limitations。
+- 前端可再加入「為什麼不能分析」的阻止原因面板，但需維持既有 UI 架構。
